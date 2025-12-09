@@ -1,0 +1,28 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:17
+    container_name: classvibe_db
+    environment:
+      POSTGRES_DB: classvibe
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"   # чтобы ты мог подключаться из pgAdmin
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  backend:
+    build: .
+    container_name: classvibe_backend
+    depends_on:
+      - db
+    env_file:
+      - .env.docker
+    ports:
+      - "8000:8000"   # API будет доступен на 8000 порту сервера
+    restart: always
+
+volumes:
+  postgres_data:

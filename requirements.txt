@@ -1,0 +1,16 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+SQLAlchemy==2.0.34
+pydantic==2.9.2
+pydantic-core==2.23.4
+email-validator==2.2.0
+passlib==1.7.4
+python-jose==3.3.0
+PyJWT==2.9.0
+python-multipart==0.0.9
+requests
+psycopg[binary]
+python-dotenv
+pydantic-settings
+psycopg2-binary
+firebase-admin
