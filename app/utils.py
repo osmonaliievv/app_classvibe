@@ -43,10 +43,7 @@ def create_access_token(subject: str | int) -> str:
 
 
 def create_refresh_token(subject: str | int) -> str:
-    """
-    Создает долгоживущий токен (30 дней), который используется
-    только для получения нового access токена.
-    """
+
     expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
     to_encode = {
         "sub": str(subject),
@@ -77,24 +74,14 @@ USERNAME_REGEX = re.compile(r"^[A-Za-z0-9_.]+$")
 
 
 def validate_username(username: str) -> bool:
-    """
-    Валидация username:
-      - только английские буквы A-Z / a-z
-      - цифры 0-9
-      - точка '.'
-      - подчёркивание '_'
-      - длина от 3 до 50 символов
-    """
+
     if len(username) < 3 or len(username) > 50:
         return False
     return USERNAME_REGEX.fullmatch(username) is not None
 
 
 def is_valid_username(username: str) -> bool:
-    """
-    Старое имя-функции, оставляем для обратной совместимости.
-    Логика такая же, как у validate_username.
-    """
+
     return validate_username(username)
 
 
@@ -111,3 +98,11 @@ def role_to_status(role: Optional[RoleEnum]) -> Optional[str]:
     if not role:
         return None
     return _ROLE_STATUS_MAP.get(role)
+
+
+# Добавить в конец utils.py
+def format_local_time(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        import datetime as dt_module
+        return dt.replace(tzinfo=dt_module.timezone.utc)
+    return dt

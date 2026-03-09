@@ -53,12 +53,7 @@ def _best_posts_school(
     hours: int = 48,
     limit: int = 5,
 ) -> List[Post]:
-    """
-    Лучшие посты школы за 24–48 часов.
-    Возвращаем просто посты (без очков/мест).
-    Скоринг внутренний (не показываем пользователю):
-      score = like_count*2 + comment_count*3
-    """
+
     since = datetime.utcnow() - timedelta(hours=hours)
 
     return (
@@ -91,11 +86,7 @@ def _pick_active_classes_week(
     week_end: datetime,
     limit: int = 3,
 ) -> List[ActiveClassItem]:
-    """
-    Активные классы недели.
-    ✅ Без мест, без очков, без сравнения.
-    Просто выбираем несколько классов и назначаем "статус".
-    """
+
 
     # Посты за неделю по классам
     posts_q = (
@@ -239,9 +230,7 @@ def get_school_life(
     active_classes_limit: int = 3,
     achievements_limit: int = 5,
 ):
-    """
-    Один запрос для экрана "Жизнь школы" (как на дизайне).
-    """
+
     target_school = school_name or current_user.school_name
     if not target_school:
         raise HTTPException(status_code=400, detail="Не указана школа (school_name в профиле)")
@@ -359,7 +348,7 @@ def update_event(
     if not ev:
         raise HTTPException(status_code=404, detail="Событие не найдено")
 
-    for field, value in payload.dict(exclude_unset=True).items():
+    for field, value in payload.model_dump(exclude_unset=True).items():
         if field == "status" and value is not None:
             setattr(ev, field, EventStatusEnum(value))
         else:
@@ -454,7 +443,7 @@ def update_achievement(
     if not ach:
         raise HTTPException(status_code=404, detail="Достижение не найдено")
 
-    data = payload.dict(exclude_unset=True)
+    data = payload.model_dump(exclude_unset=True)
 
     if "target" in data and data["target"] is not None:
         data["target"] = AchievementTargetEnum(data["target"])

@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import List, Dict, Any
+from sqlalchemy.orm import joinedload
 
 from fastapi import (
     APIRouter,
@@ -34,9 +35,9 @@ os.makedirs(os.path.join(MEDIA_ROOT, CHATS_SUBDIR), exist_ok=True)
 
 
 def get_or_create_direct_chat(
-    db: Session,
-    user_a_id: int,
-    user_b_id: int,
+        db: Session,
+        user_a_id: int,
+        user_b_id: int,
 ) -> models.Chat:
     if user_a_id == user_b_id:
         raise HTTPException(
@@ -86,10 +87,10 @@ def get_or_create_direct_chat(
 
 
 def _create_message_and_notify(
-    db: Session,
-    chat: models.Chat,
-    sender: models.User,
-    payload: schemas.MessageCreate,
+        db: Session,
+        chat: models.Chat,
+        sender: models.User,
+        payload: schemas.MessageCreate,
 ) -> models.Message:
     if payload.type == MessageTypeEnum.text:
         if not payload.content:
@@ -245,10 +246,10 @@ manager = ConnectionManager()
 
 @router.get("/", response_model=List[schemas.ChatOut])
 def list_my_chats(
-    chat_type: models.ChatTypeEnum | None = None,
-    search: str | None = None,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        chat_type: models.ChatTypeEnum | None = None,
+        search: str | None = None,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     q = (
         db.query(models.Chat)
@@ -310,9 +311,9 @@ def list_my_chats(
 
 @router.get("/{chat_id}/messages", response_model=List[schemas.MessageOut])
 def list_messages(
-    chat_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        chat_id: int,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     participant = (
         db.query(models.ChatParticipant)
@@ -331,6 +332,7 @@ def list_messages(
     # исключаем сообщения, скрытые "только для меня" через MessageStatus.is_hidden
     messages = (
         db.query(models.Message)
+        .options(joinedload(models.Message.sender))
         .outerjoin(
             models.MessageStatus,
             (models.MessageStatus.message_id == models.Message.id)
@@ -362,10 +364,10 @@ def list_messages(
     status_code=status.HTTP_201_CREATED,
 )
 def send_message(
-    chat_id: int,
-    payload: schemas.MessageCreate,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        chat_id: int,
+        payload: schemas.MessageCreate,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     participant = (
         db.query(models.ChatParticipant)
@@ -404,10 +406,10 @@ def send_message(
 
 @router.post("/{chat_id}/messages/read", response_model=schemas.SimpleMessage)
 def mark_messages_read(
-    chat_id: int,
-    payload: schemas.MessageReadRequest,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        chat_id: int,
+        payload: schemas.MessageReadRequest,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     participant = (
         db.query(models.ChatParticipant)
@@ -457,11 +459,11 @@ def mark_messages_read(
 
 @router.patch("/{chat_id}/messages/{message_id}", response_model=schemas.MessageOut)
 def edit_message(
-    chat_id: int,
-    message_id: int,
-    payload: schemas.MessageEditRequest,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        chat_id: int,
+        message_id: int,
+        payload: schemas.MessageEditRequest,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     msg = (
         db.query(models.Message)
@@ -494,11 +496,11 @@ def edit_message(
 
 @router.delete("/{chat_id}/messages/{message_id}", response_model=schemas.SimpleMessage)
 def delete_message(
-    chat_id: int,
-    message_id: int,
-    payload: schemas.MessageDeleteRequest,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        chat_id: int,
+        message_id: int,
+        payload: schemas.MessageDeleteRequest,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     msg = (
         db.query(models.Message)
@@ -578,11 +580,11 @@ def delete_message(
 
 @router.post("/{chat_id}/messages/{message_id}/reaction", response_model=schemas.SimpleMessage)
 def set_reaction(
-    chat_id: int,
-    message_id: int,
-    payload: schemas.ReactionRequest,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        chat_id: int,
+        message_id: int,
+        payload: schemas.ReactionRequest,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     msg = (
         db.query(models.Message)
@@ -632,10 +634,10 @@ def set_reaction(
     response_model=schemas.FavoriteToggleResponse,
 )
 def toggle_favorite(
-    chat_id: int,
-    message_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        chat_id: int,
+        message_id: int,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     msg = (
         db.query(models.Message)
@@ -674,9 +676,9 @@ def toggle_favorite(
 
 @router.get("/{chat_id}/favorites", response_model=List[schemas.MessageOut])
 def list_favorites_in_chat(
-    chat_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        chat_id: int,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     participant = (
         db.query(models.ChatParticipant)
@@ -711,10 +713,10 @@ def list_favorites_in_chat(
 
 @router.post("/{chat_id}/pin/{message_id}", response_model=schemas.ChatOut)
 def pin_message(
-    chat_id: int,
-    message_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        chat_id: int,
+        message_id: int,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     chat = (
         db.query(models.Chat)
@@ -770,9 +772,9 @@ def pin_message(
 
 @router.post("/{chat_id}/unpin", response_model=schemas.ChatOut)
 def unpin_message(
-    chat_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        chat_id: int,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     chat = (
         db.query(models.Chat)
@@ -807,9 +809,9 @@ def unpin_message(
 
 @router.post("/direct/{user_id}", response_model=schemas.ChatOut)
 def open_direct_chat(
-    user_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        user_id: int,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     chat = get_or_create_direct_chat(db, current_user.id, user_id)
 
@@ -845,9 +847,9 @@ def open_direct_chat(
 
 @router.post("/group", response_model=schemas.ChatOut, status_code=status.HTTP_201_CREATED)
 def create_group_chat(
-    payload: schemas.GroupChatCreateRequest,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        payload: schemas.GroupChatCreateRequest,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     now = datetime.utcnow()
     chat = models.Chat(
@@ -892,9 +894,9 @@ def create_group_chat(
 
 @router.post("/channel", response_model=schemas.ChatOut, status_code=status.HTTP_201_CREATED)
 def create_channel(
-    payload: schemas.ChannelChatCreateRequest,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        payload: schemas.ChannelChatCreateRequest,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     now = datetime.utcnow()
     chat = models.Chat(
@@ -942,10 +944,10 @@ def create_channel(
 
 @router.post("/{chat_id}/set-admin/{user_id}", response_model=schemas.SimpleMessage)
 def set_chat_admin(
-    chat_id: int,
-    user_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        chat_id: int,
+        user_id: int,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     chat = (
         db.query(models.Chat)
@@ -976,10 +978,10 @@ def set_chat_admin(
 
 @router.post("/{chat_id}/ban/{user_id}", response_model=schemas.SimpleMessage)
 def ban_user(
-    chat_id: int,
-    user_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        chat_id: int,
+        user_id: int,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     chat = (
         db.query(models.Chat)
@@ -1009,10 +1011,10 @@ def ban_user(
 
 @router.post("/{chat_id}/rename", response_model=schemas.ChatOut)
 def rename_chat(
-    chat_id: int,
-    new_title: str,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        chat_id: int,
+        new_title: str,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     chat = (
         db.query(models.Chat)
@@ -1042,10 +1044,10 @@ def rename_chat(
 
 @router.post("/{chat_id}/avatar", response_model=schemas.ChatOut)
 async def upload_chat_avatar(
-    chat_id: int,
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        chat_id: int,
+        file: UploadFile = File(...),
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     chat = (
         db.query(models.Chat)
@@ -1089,10 +1091,10 @@ async def upload_chat_avatar(
 
 @router.websocket("/ws/{chat_id}")
 async def chat_websocket(
-    websocket: WebSocket,
-    chat_id: int,
-    token: str,
-    db: Session = Depends(get_db),
+        websocket: WebSocket,
+        chat_id: int,
+        token: str,
+        db: Session = Depends(get_db),
 ):
     payload = decode_access_token(token)
     if not payload or "sub" not in payload:

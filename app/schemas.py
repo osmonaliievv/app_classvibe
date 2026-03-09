@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Optional, List, Dict, Literal
 
 from pydantic import BaseModel, EmailStr, Field, validator
@@ -204,9 +204,16 @@ class PostOut(PostBase):
     like_count: int
     comment_count: int
     created_at: datetime
+    author: Optional[UserShort] = None
 
     class Config:
         from_attributes = True
+
+    @validator("created_at", pre=True)
+    def ensure_utc(cls, v):
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
 
 
 class PostMediaUploadResponse(BaseModel):
@@ -232,9 +239,16 @@ class CommentOut(BaseModel):
     content: str
     like_count: int
     created_at: datetime
+    user: Optional[UserShort] = None
 
     class Config:
         from_attributes = True
+
+    @validator("created_at", pre=True)
+    def ensure_utc(cls, v):
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
 
 
 class CommentLikeResponse(BaseModel):
@@ -272,6 +286,7 @@ class MessageOut(BaseModel):
     id: int
     chat_id: int
     sender_id: Optional[int]
+    sender: Optional[UserShort] = None
     type: MessageTypeEnum
     content: Optional[str]
     post_id: Optional[int]
@@ -287,6 +302,12 @@ class MessageOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+    @validator("created_at", pre=True)
+    def ensure_utc(cls, v):
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
 
 
 class SharePostRequest(BaseModel):
@@ -380,6 +401,12 @@ class NotificationOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+    @validator("created_at", pre=True)
+    def ensure_utc(cls, v):
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
 
 
 # ------ Push / FCM ------

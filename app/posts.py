@@ -2,6 +2,7 @@ import os
 from datetime import datetime
 from typing import List
 from uuid import uuid4
+from sqlalchemy.orm import Session, joinedload
 
 from fastapi import (
     APIRouter,
@@ -59,10 +60,6 @@ MAX_VIDEO_SIZE_BYTES = MAX_VIDEO_SIZE_MB * 1024 * 1024
 
 
 async def _validate_media_upload(file: UploadFile):
-    """
-    Проверяем тип и размер файла.
-    Возвращаем (bytes, MediaTypeEnum).
-    """
     contents = await file.read()
     size = len(contents)
     content_type = (file.content_type or "").lower()
@@ -91,23 +88,13 @@ async def _validate_media_upload(file: UploadFile):
 
 
 def _calc_feed_score(
-    *,
-    post: Post,
-    author: User,
-    current_user: User,
-    is_followed: bool,
-    now: datetime,
+        *,
+        post: Post,
+        author: User,
+        current_user: User,
+        is_followed: bool,
+        now: datetime,
 ) -> float:
-    """
-    Алгоритмический скоринг поста для ленты.
-
-    Логика:
-      - базовый вес за активность:
-            like_count * 2 + comment_count * 3
-      - свежие посты получают буст
-      - свои посты / посты подписок получают буст
-      - если одна школа — небольшой бонус
-    """
     like_count = post.like_count or 0
     comment_count = post.comment_count or 0
     base_score = like_count * 2 + comment_count * 3
@@ -133,9 +120,9 @@ def _calc_feed_score(
 
     # одна школа
     same_school = (
-        author.school_name
-        and current_user.school_name
-        and author.school_name == current_user.school_name
+            author.school_name
+            and current_user.school_name
+            and author.school_name == current_user.school_name
     )
     school_boost = 5 if same_school else 0
 
@@ -147,9 +134,9 @@ def _calc_feed_score(
 
 @router.post("/", response_model=PostOut, status_code=status.HTTP_201_CREATED)
 def create_post(
-    payload: PostCreate,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        payload: PostCreate,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     # ✅ создаём пост (одиночное медиа: media_url + media_type)
     post = Post(
@@ -176,15 +163,16 @@ def create_post(
 
     return post
 
+
 # ------------------ ПРОСТО СПИСОК ВСЕХ ПОСТОВ ------------------ #
 
 
 @router.get("/", response_model=List[PostOut])
 def list_posts(
-    limit: int = 20,
-    offset: int = 0,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        limit: int = 20,
+        offset: int = 0,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     posts = (
         db.query(Post)
@@ -202,20 +190,11 @@ def list_posts(
 
 @router.get("/feed", response_model=List[PostOut])
 def feed(
-    limit: int = 20,
-    offset: int = 0,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        limit: int = 20,
+        offset: int = 0,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
-    """
-    Алгоритмическая лента:
-
-    - приоритет: свои посты + посты подписок;
-    - если подписок нет — подмешиваем все посты;
-    - сортировка по score:
-        score = 2 * likes + 3 * comments + свежесть + буст друзей + буст одной школы
-    """
-
     # 1) список подписок
     follows = (
         db.query(Follow)
@@ -271,10 +250,10 @@ def feed(
 
 @router.get("/feed/friends", response_model=List[PostOut])
 def friends_feed(
-    limit: int = 20,
-    offset: int = 0,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        limit: int = 20,
+        offset: int = 0,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     follows = (
         db.query(Follow)
@@ -300,10 +279,10 @@ def friends_feed(
 
 @router.patch("/{post_id}", response_model=PostOut)
 def update_post(
-    post_id: int,
-    payload: PostUpdate,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        post_id: int,
+        payload: PostUpdate,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     post = (
         db.query(Post)
@@ -356,9 +335,9 @@ def update_post(
 
 @router.delete("/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_post(
-    post_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        post_id: int,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     post = (
         db.query(Post)
@@ -386,12 +365,9 @@ def delete_post(
 
 @router.post("/upload-image", response_model=PostMediaUploadResponse)
 async def upload_post_media(
-    file: UploadFile = File(...),
-    current_user=Depends(get_current_user),
+        file: UploadFile = File(...),
+        current_user=Depends(get_current_user),
 ):
-    """
-    Загрузка медиаданных для поста (картинка / видео).
-    """
     contents, media_type = await _validate_media_upload(file)
 
     ext = os.path.splitext(file.filename or "")[1].lower()
@@ -419,9 +395,9 @@ async def upload_post_media(
 
 @router.post("/{post_id}/like", response_model=LikeResponse)
 def like_post(
-    post_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        post_id: int,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     post = (
         db.query(Post)
@@ -472,10 +448,10 @@ def like_post(
 
 @router.post("/{post_id}/comment", response_model=CommentOut, status_code=status.HTTP_201_CREATED)
 def add_comment(
-    post_id: int,
-    payload: CommentCreate,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        post_id: int,
+        payload: CommentCreate,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     post = (
         db.query(Post)
@@ -549,9 +525,9 @@ def add_comment(
 
 @router.get("/{post_id}/comments", response_model=List[CommentOut])
 def list_comments(
-    post_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        post_id: int,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     post = (
         db.query(Post)
@@ -572,9 +548,9 @@ def list_comments(
 
 @router.post("/comments/{comment_id}/like", response_model=CommentLikeResponse)
 def like_comment(
-    comment_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        comment_id: int,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     comment = (
         db.query(Comment)
@@ -635,10 +611,10 @@ def like_comment(
 
 @router.post("/{post_id}/share", response_model=SimpleMessage)
 def share_post(
-    post_id: int,
-    payload: SharePostRequest,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        post_id: int,
+        payload: SharePostRequest,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
     post = (
         db.query(Post)
@@ -687,14 +663,10 @@ def share_post(
 
 @router.post("/media/{media_id}/view", response_model=SimpleMessage)
 def add_media_view(
-    media_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+        media_id: int,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
 ):
-    """
-    Увеличивает счётчик просмотров для конкретного медиа (обычно видео).
-    Фронт должен вызывать этот эндпоинт, когда пользователь реально посмотрел видео.
-    """
     media = (
         db.query(PostMedia)
         .join(Post, PostMedia.post_id == Post.id)
@@ -718,3 +690,39 @@ def add_media_view(
     db.commit()
 
     return SimpleMessage(message="Просмотр засчитан")
+
+
+@router.get("/", response_model=List[PostOut])
+def list_posts(
+        limit: int = 20,
+        offset: int = 0,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
+):
+    posts = (
+        db.query(Post)
+        .options(joinedload(Post.author))  # Подгружаем автора
+        .filter(Post.is_deleted == False)
+        .order_by(Post.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return posts
+
+
+@router.get("/{post_id}/comments", response_model=List[CommentOut])
+def list_comments(
+        post_id: int,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
+):
+    # ... (проверка существования поста)
+    comments = (
+        db.query(Comment)
+        .options(joinedload(Comment.user))  # Подгружаем данные юзера
+        .filter(Comment.post_id == post_id, Comment.is_deleted == False)
+        .order_by(Comment.created_at.asc())
+        .all()
+    )
+    return comments
