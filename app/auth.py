@@ -12,6 +12,7 @@ from .utils import (
     hash_password,
     verify_password as utils_verify_password,
     create_access_token,
+    create_refresh_token,  # Добавили импорт
     generate_verification_code,
     decode_access_token,
     validate_username,
@@ -19,13 +20,15 @@ from .utils import (
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-VERIFICATION_CODE_LIFETIME_SECONDS = 5 * 60  # 5 минут
-RESEND_CODE_COOLDOWN_SECONDS = 60           # 1 минута
-ONLINE_DELTA_SECONDS = 120                  # сколько секунд считаем пользователя online
+VERIFICATION_CODE_LIFETIME_SECONDS = 5 * 60  # 5 минут (регистрация)
+RESEND_CODE_COOLDOWN_SECONDS = 60  # 1 минута (регистрация)
+ONLINE_DELTA_SECONDS = 120  # сколько секунд считаем пользователя online
+
+# --- Forgot Password ---
+RESET_CODE_LIFETIME_SECONDS = 10 * 60  # 10 минут на сброс пароля
 
 
 # ---------- Вспомогательные функции ----------
-
 
 def get_password_hash(password: str) -> str:
     return hash_password(password)
@@ -36,8 +39,8 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 def _get_registration_or_404(
-    db: Session,
-    registration_id: str,
+        db: Session,
+        registration_id: str,
 ) -> models.RegistrationSession:
     reg = (
         db.query(models.RegistrationSession)
@@ -53,14 +56,11 @@ def _get_registration_or_404(
 
 
 def _send_verification_code(
-    contact_type: models.ContactTypeEnum,
-    contact_value: str,
-    code: str,
+        contact_type: models.ContactTypeEnum,
+        contact_value: str,
+        code: str,
 ):
-    """
-    Заглушка отправки кода.
-    Сейчас просто печатаем в консоль, чтобы было сложно пропустить.
-    """
+
     print("\n" + "=" * 70, flush=True)
     print(
         f"[VERIFICATION CODE] type={contact_type.value} value={contact_value}  CODE={code}",
@@ -69,13 +69,21 @@ def _send_verification_code(
     print("=" * 70 + "\n", flush=True)
 
 
+def _send_reset_code(identifier: str, code: str):
+
+    print("\n" + "=" * 70, flush=True)
+    print(
+        f"[RESET PASSWORD CODE] identifier={identifier}  CODE={code}",
+        flush=True,
+    )
+    print("=" * 70 + "\n", flush=True)
+
+
 def get_current_user(
-    authorization: str = Header(None),
-    db: Session = Depends(get_db),
+        authorization: str = Header(None),
+        db: Session = Depends(get_db),
 ) -> models.User:
-    """
-    Получение текущего пользователя по заголовку Authorization: Bearer <token>.
-    """
+
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -85,10 +93,11 @@ def get_current_user(
     token = authorization.split(" ", 1)[1].strip()
     payload = decode_access_token(token)
 
-    if not payload or "sub" not in payload:
+    # Проверяем, что это именно access токен, а не refresh
+    if not payload or "sub" not in payload or payload.get("type") != "access":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Невалидный или просроченный токен",
+            detail="Невалидный или просроченный токен доступа",
         )
 
     user_id = int(payload["sub"])
@@ -110,32 +119,33 @@ def get_current_user(
 
 
 def is_user_online(user: models.User) -> bool:
-    """
-    Проверка, в онлайне ли пользователь по last_seen.
-    """
+
     if not getattr(user, "last_seen", None):
         return False
     delta = datetime.utcnow() - user.last_seen
     return delta.total_seconds() <= ONLINE_DELTA_SECONDS
 
 
-# ---------- Логин ----------
+def _find_user_by_identifier(db: Session, identifier: str) -> models.User | None:
 
-
-@router.post("/login", response_model=schemas.LoginResponse)
-def login(data: schemas.LoginRequest, db: Session = Depends(get_db)):
-    """
-    Логин по email / телефону / username + пароль.
-    """
-    user = (
+    return (
         db.query(models.User)
         .filter(
-            (models.User.email == data.identifier)
-            | (models.User.phone == data.identifier)
-            | (models.User.username == data.identifier)
+            (models.User.email == identifier)
+            | (models.User.phone == identifier)
+            | (models.User.username == identifier)
         )
         .first()
     )
+
+
+# ---------- Логин ----------
+
+@router.post("/login", response_model=schemas.LoginResponse)
+def login(data: schemas.LoginRequest, db: Session = Depends(get_db)):
+
+    user = _find_user_by_identifier(db, data.identifier)
+
     if not user or not verify_password(data.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -147,21 +157,53 @@ def login(data: schemas.LoginRequest, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
 
-    token = create_access_token(user.id)
-    return schemas.LoginResponse(user=user, token=schemas.Token(access_token=token))
+    # Генерируем два токена для эффекта Instagram
+    access_token = create_access_token(user.id)
+    refresh_token = create_refresh_token(user.id)
+
+    return schemas.LoginResponse(
+        user=user,
+        token=schemas.Token(
+            access_token=access_token,
+            refresh_token=refresh_token
+        )
+    )
+
+
+# ---------- Обновление токена (Refresh) ----------
+
+@router.post("/refresh", response_model=schemas.Token)
+def refresh_access_token(data: schemas.RefreshRequest, db: Session = Depends(get_db)):
+
+    payload = decode_access_token(data.refresh_token)
+
+    if not payload or payload.get("type") != "refresh":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Невалидный или просроченный токен обновления",
+        )
+
+    user_id = int(payload["sub"])
+    user = db.query(models.User).filter(models.User.id == user_id, models.User.is_active == True).first()
+
+    if not user:
+        raise HTTPException(status_code=401, detail="Пользователь не найден или заблокирован")
+
+    # Выдаем новую пару токенов
+    return schemas.Token(
+        access_token=create_access_token(user.id),
+        refresh_token=create_refresh_token(user.id)
+    )
 
 
 # ---------- Регистрация: шаг 1 — BIO ----------
 
-
 @router.post("/register/bio", response_model=schemas.RegistrationSessionResponse)
 def register_bio(
-    data: schemas.RegisterBioRequest,
-    db: Session = Depends(get_db),
+        data: schemas.RegisterBioRequest,
+        db: Session = Depends(get_db),
 ):
-    """
-    Создаём сессию регистрации и заполняем имя, фамилию, дату рождения, пол.
-    """
+
     reg = models.RegistrationSession(
         id=str(uuid.uuid4()),
         first_name=data.first_name,
@@ -177,11 +219,10 @@ def register_bio(
 
 # ---------- Регистрация: шаг 2 — роль ----------
 
-
 @router.post("/register/role", response_model=schemas.RegistrationSessionResponse)
 def register_role(
-    data: schemas.RegisterRoleRequest,
-    db: Session = Depends(get_db),
+        data: schemas.RegisterRoleRequest,
+        db: Session = Depends(get_db),
 ):
     reg = _get_registration_or_404(db, data.registration_id)
     reg.role = data.role
@@ -192,11 +233,10 @@ def register_role(
 
 # ---------- Регистрация: шаг 3 — контакт ----------
 
-
 @router.post("/register/contact", response_model=schemas.RegistrationSessionResponse)
 def register_contact(
-    data: schemas.RegisterContactRequest,
-    db: Session = Depends(get_db),
+        data: schemas.RegisterContactRequest,
+        db: Session = Depends(get_db),
 ):
     reg = _get_registration_or_404(db, data.registration_id)
 
@@ -240,17 +280,16 @@ def register_contact(
 
 # ---------- Регистрация: повторная отправка кода ----------
 
-
 @router.post("/register/resend-code", response_model=schemas.RegistrationSessionResponse)
 def resend_code(
-    data: schemas.ResendCodeRequest,
-    db: Session = Depends(get_db),
+        data: schemas.ResendCodeRequest,
+        db: Session = Depends(get_db),
 ):
     reg = _get_registration_or_404(db, data.registration_id)
 
     now = datetime.utcnow()
     if reg.last_code_sent_at and (
-        now - reg.last_code_sent_at
+            now - reg.last_code_sent_at
     ).total_seconds() < RESEND_CODE_COOLDOWN_SECONDS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -279,11 +318,10 @@ def resend_code(
 
 # ---------- Регистрация: проверка кода ----------
 
-
 @router.post("/register/verify-code", response_model=schemas.RegistrationSessionResponse)
 def verify_code(
-    data: schemas.VerifyCodeRequest,
-    db: Session = Depends(get_db),
+        data: schemas.VerifyCodeRequest,
+        db: Session = Depends(get_db),
 ):
     reg = _get_registration_or_404(db, data.registration_id)
 
@@ -314,11 +352,10 @@ def verify_code(
 
 # ---------- Регистрация: пароль ----------
 
-
 @router.post("/register/password", response_model=schemas.RegistrationSessionResponse)
 def register_password(
-    data: schemas.RegisterPasswordRequest,
-    db: Session = Depends(get_db),
+        data: schemas.RegisterPasswordRequest,
+        db: Session = Depends(get_db),
 ):
     reg = _get_registration_or_404(db, data.registration_id)
 
@@ -343,11 +380,10 @@ def register_password(
 
 # ---------- Проверка username ----------
 
-
 @router.get("/username-check", response_model=schemas.UsernameCheckResponse)
 def username_check(
-    username: str,
-    db: Session = Depends(get_db),
+        username: str,
+        db: Session = Depends(get_db),
 ):
     if not validate_username(username):
         return schemas.UsernameCheckResponse(username=username, available=False)
@@ -365,13 +401,11 @@ def username_check(
 
 # ---------- Регистрация: финал — username + создание пользователя ----------
 
-
 @router.post("/register/username", response_model=schemas.LoginResponse)
 def register_username(
-    data: schemas.RegisterUsernameRequest,
-    db: Session = Depends(get_db),
+        data: schemas.RegisterUsernameRequest,
+        db: Session = Depends(get_db),
 ):
-
     reg_id = data.session_id or data.registration_id
     if not reg_id:
         raise HTTPException(
@@ -387,7 +421,6 @@ def register_username(
             detail="Сначала подтвердите контакт",
         )
 
-    # проверяем, что все обязательные поля заполнены
     required_fields = (
         "first_name",
         "last_name",
@@ -402,12 +435,11 @@ def register_username(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "Регистрация не завершена: отсутствуют данные в полях: "
-                + ", ".join(missing)
+                    "Регистрация не завершена: отсутствуют данные в полях: "
+                    + ", ".join(missing)
             ),
         )
 
-    # проверяем username
     if not validate_username(data.username):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -428,13 +460,11 @@ def register_username(
             detail="Имя пользователя уже занято",
         )
 
-    # сохраняем username в сессии
     reg.username = data.username
     reg.is_completed = True
     reg.updated_at = datetime.utcnow()
     db.add(reg)
 
-    # создаём пользователя
     user = models.User(
         first_name=reg.first_name,
         last_name=reg.last_name,
@@ -457,42 +487,106 @@ def register_username(
     db.commit()
     db.refresh(user)
 
-    token_str = create_access_token(user.id)
-    token = schemas.Token(access_token=token_str)
+    # При регистрации также выдаем оба токена
+    access_token = create_access_token(user.id)
+    refresh_token = create_refresh_token(user.id)
+    token = schemas.Token(access_token=access_token, refresh_token=refresh_token)
+
     return schemas.LoginResponse(user=user, token=token)
 
 
-# ---------- Забыл пароль (заглушка) ----------
-
+# ---------- Забыл пароль: 1) запрос кода ----------
 
 @router.post("/forgot-password", response_model=schemas.SimpleMessage)
 def forgot_password(
-    data: schemas.ForgotPasswordRequest,
-    db: Session = Depends(get_db),
+        data: schemas.ForgotPasswordRequest,
+        db: Session = Depends(get_db),
 ):
-    user = (
-        db.query(models.User)
-        .filter(
-            (models.User.email == data.identifier)
-            | (models.User.phone == data.identifier)
-            | (models.User.username == data.identifier)
-        )
-        .first()
-    )
+
+    user = _find_user_by_identifier(db, data.identifier)
+
+    # одинаковый ответ для всех случаев
+    ok_msg = "Если аккаунт существует, будут отправлены инструкции."
+
     if not user:
-        # Не палим, существует ли пользователь
-        return schemas.SimpleMessage(
-            message="Если аккаунт существует, будут отправлены инструкции.",
+        return schemas.SimpleMessage(message=ok_msg)
+
+    # генерируем код
+    code = generate_verification_code()
+
+    # сохраняем в user
+    user.reset_code_hash = get_password_hash(code)
+    user.reset_code_expires_at = datetime.utcnow() + timedelta(
+        seconds=RESET_CODE_LIFETIME_SECONDS
+    )
+    db.add(user)
+    db.commit()
+
+    # "отправляем" (пока заглушка)
+    _send_reset_code(data.identifier, code)
+
+    return schemas.SimpleMessage(message=ok_msg)
+
+
+# ---------- Забыл пароль: 2) подтверждение кода + новый пароль ----------
+
+@router.post("/forgot-password/confirm", response_model=schemas.SimpleMessage)
+def forgot_password_confirm(
+        data: schemas.ForgotPasswordConfirmRequest,
+        db: Session = Depends(get_db),
+):
+
+    user = _find_user_by_identifier(db, data.identifier)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Неверный код или он истёк",
         )
 
-    print(f"[DEBUG] Запрос на сброс пароля для пользователя id={user.id}")
-    return schemas.SimpleMessage(
-        message="Если аккаунт существует, будут отправлены инструкции.",
-    )
+    if not user.reset_code_hash or not user.reset_code_expires_at:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Код не запрашивался или уже использован",
+        )
+
+    if datetime.utcnow() > user.reset_code_expires_at:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Код истёк, запросите новый",
+        )
+
+    if not verify_password(data.code, user.reset_code_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Неверный код",
+        )
+
+    if data.new_password != data.new_password_confirm:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Пароли не совпадают",
+        )
+
+    if len(data.new_password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Пароль должен быть не короче 8 символов",
+        )
+
+    # обновляем пароль
+    user.password_hash = get_password_hash(data.new_password)
+
+    # сбрасываем reset-код (чтобы нельзя было использовать повторно)
+    user.reset_code_hash = None
+    user.reset_code_expires_at = None
+
+    db.add(user)
+    db.commit()
+
+    return schemas.SimpleMessage(message="Пароль успешно изменён. Теперь войдите в аккаунт.")
 
 
 # ---------- /auth/me ----------
-
 
 @router.get("/me", response_model=schemas.UserBase)
 def get_me(current_user: models.User = Depends(get_current_user)):

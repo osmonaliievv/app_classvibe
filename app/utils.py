@@ -1,7 +1,7 @@
 import random
 import re
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Dict, Any
 
 import jwt
 from passlib.context import CryptContext
@@ -28,10 +28,31 @@ def verify_password(plain_password: str, password_hash: str) -> bool:
 
 # ---------- JWT токены ----------
 
+# Время жизни Refresh токена — 30 дней (как в Instagram)
+REFRESH_TOKEN_EXPIRE_DAYS = 30
+
 
 def create_access_token(subject: str | int) -> str:
     expires_delta: timedelta = get_access_token_expires_delta()
-    to_encode = {"sub": str(subject), "exp": datetime.utcnow() + expires_delta}
+    to_encode = {
+        "sub": str(subject),
+        "exp": datetime.utcnow() + expires_delta,
+        "type": "access"  # Добавляем тип токена
+    }
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+
+def create_refresh_token(subject: str | int) -> str:
+    """
+    Создает долгоживущий токен (30 дней), который используется
+    только для получения нового access токена.
+    """
+    expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    to_encode = {
+        "sub": str(subject),
+        "exp": expire,
+        "type": "refresh"  # Четко помечаем, что это refresh
+    }
     return jwt.encode(to_encode, SECRET_KEY, algorithm=JWT_ALGORITHM)
 
 

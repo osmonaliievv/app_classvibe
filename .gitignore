@@ -1,173 +1,49 @@
 ### Python ###
-# Байтовые/оптимизированные/библиотечные файлы
 __pycache__/
 *.py[cod]
 *$py.class
-
-# Расширения C
 *.so
 
-# Распространение/упаковка
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# PyInstaller
-# Обычно эти файлы создаются скриптом Python на основе шаблона
-# перед тем, как PyInstaller соберет исполняемый файл, чтобы добавить в него дату и другую информацию.
-*.manifest
-*.spec
-
-# Журналы установки
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Отчеты о модульном тестировании / покрытии кода
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-cover/
-
-# Переводы
-*.mo
-*.pot
-
-# Файлы Django:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-
-# Файлы Flask:
-instance/
-.webassets-cache
-
-# Файлы Scrapy:
-.scrapy
-
-# Документация Sphinx
-docs/_build/
-
-# PyBuilder
-.pybuilder/
-target/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-# Если речь идёт о библиотеке или пакете, вы можете проигнорировать эти файлы, поскольку код
-# предназначен для работы в нескольких средах; в противном случае добавьте их в:
-# .python-version
-
-# pipenv
-# Согласно pypa/pipenv#598, рекомендуется включать Pipfile.lock в систему контроля версий.
-# Однако в случае совместной работы, если у вас есть зависимости для конкретной платформы или зависимости
-# не имея кроссплатформенной поддержки, pipenv может устанавливать зависимости, которые не работают, или нет.
-# установите все необходимые зависимости.
-#Pipfile.блокировка
-
-# поэзия
-# Аналогично Pipfile.lock, обычно рекомендуется включать poetry.lock в системе управления версиями.
-# Это особенно рекомендуется для двоичных пакетов для обеспечения воспроизводимости и чаще всего игнорируется для библиотек.
-#
-# https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
-#poetry.lock
-
-# pdm
-# Как и в случае с Pipfile.lock, обычно рекомендуется включать pdm.lock в систему контроля версий.
-#pdm.lock
-# pdm хранит общесистемные конфигурации в .pdm.toml, но рекомендуется не включать его
-# в систему контроля версий.
-# https://pdm.fming.dev/#use-with-ide
-.pdm.toml
-
-# PEP 582; используется, например, на github.com/David-OConnor/pyflow и github.com/pdm-project/pdm
-__pypackages__/
-
-# Файлы Celery
-celerybeat-schedule
-celerybeat.pid
-
-# Файлы, обработанные SageMath
-*.sage.py
-
-# Среды
+### Среды (Виртуальные окружения) ###
+# Игнорируем всё, что связано с локальными библиотеками
 .env
 .venv
 env/
 venv/
 ENV/
-env.bak/
-venv.bak/
+.env.docker
+.env.local
 
-# Настройки проекта Spyder
-.spyderproject
-.spyproject
+### Базы данных ###
+# Локальные БД не должны быть в репозитории
+*.db
+*.sqlite3
+*.sqlite3-journal
 
-# Настройки проекта Rope
-.ropeproject
+### Инструменты миграций (Alembic) ###
+# Сам код миграций (versions/) НУЖНО пушить, но конфиг с паролем — нет
+alembic.ini
 
-# Документация mkdocs
-/site
+### Docker ###
+.dockerignore
+# Если используешь docker-compose, файлы данных контейнеров (если они в папке проекта)
+# data/ (раскомментируй, если БД сохраняется в папку проекта)
 
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Средство проверки типов Pyre
-.pyre/
-
-# Статический анализатор типов pytype
-.pytype/
-
-# Отладочные символы Cython
-cython_debug/
-
-# PyCharm
-# Шаблон, специфичный для JetBrains, хранится в отдельном файле JetBrains.gitignore, который можно
-# найти по адресу https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
-# и добавить в глобальный файл gitignore или объединить с этим файлом. Для более радикального
-# варианта (не рекомендуется) можно раскомментировать следующий код, чтобы игнорировать всю папку idea.
+### PyCharm / VS Code ###
 .idea/
+.vscode/
+*.swp
+*.swo
 
-### Исправление для Python ###
-# Файл локальной конфигурации Poetry — https://python-poetry.org/docs/configuration/#local-configuration
-poetry.toml
+### Распространение / Логи ###
+*.log
+build/
+dist/
+*.egg-info/
+requirements.txt.bak
 
-# ruff
-.ruff_cache/
-
-# Файлы конфигурации LSP
-pyrightconfig.json
-
-# Конец https://www.toptal.com/developers/gitignore/api/python
+### Тестирование ###
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/

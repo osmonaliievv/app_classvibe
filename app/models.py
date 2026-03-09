@@ -59,8 +59,8 @@ class NotificationTypeEnum(str, enum.Enum):
     comment_replied = "comment_replied"
     new_message = "new_message"
     post_shared = "post_shared"
-    mention = "mention"          # @упоминания
-    class_rating = "class_rating"  # рейтинг классов
+    mention = "mention"  # @упоминания
+    # ❌ class_rating убрали (геймификация не нужна)
 
 
 class PushPlatformEnum(str, enum.Enum):
@@ -87,13 +87,97 @@ class ReportTargetTypeEnum(str, enum.Enum):
 
 class ReportReasonEnum(str, enum.Enum):
     spam = "spam"
-    nudity = "nudity"          # 18+
+    nudity = "nudity"  # 18+
     violence = "violence"
     hate = "hate"
     bullying = "bullying"
     illegal = "illegal"
     other = "other"
 
+
+# ==========================
+# ✅ Жизнь школы (School Life)
+# ==========================
+
+class EventStatusEnum(str, enum.Enum):
+    draft = "draft"
+    published = "published"
+    cancelled = "cancelled"
+
+
+class AchievementTargetEnum(str, enum.Enum):
+    school = "school"
+    grade = "grade"  # класс (например "7Б")
+
+
+class SchoolEvent(Base):
+    __tablename__ = "school_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    school_name = Column(String(255), nullable=True, index=True)
+
+    title = Column(String(255), nullable=False)
+    cover_url = Column(String(255), nullable=True)
+
+    starts_at = Column(DateTime, nullable=False, index=True)
+    ends_at = Column(DateTime, nullable=True)
+
+    location = Column(String(255), nullable=True)
+    description = Column(String(2000), nullable=True)
+
+    status = Column(Enum(EventStatusEnum), nullable=False, default=EventStatusEnum.published)
+
+    created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    created_by = relationship("User")
+
+
+class EventAttendance(Base):
+    __tablename__ = "event_attendance"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    event_id = Column(Integer, ForeignKey("school_events.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    attended_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("event_id", "user_id", name="uq_event_attendance"),
+    )
+
+    event = relationship("SchoolEvent")
+    user = relationship("User")
+
+
+class SchoolAchievement(Base):
+    __tablename__ = "school_achievements"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    school_name = Column(String(255), nullable=True, index=True)
+
+    target = Column(Enum(AchievementTargetEnum), nullable=False, default=AchievementTargetEnum.school)
+    grade = Column(String(50), nullable=True, index=True)  # если target=grade
+
+    title = Column(String(255), nullable=False)
+    description = Column(String(2000), nullable=True)
+    cover_url = Column(String(255), nullable=True)
+
+    achieved_at = Column(DateTime, nullable=True, index=True)
+
+    created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    created_by = relationship("User")
+
+
+# ==========================
+# Основные модели приложения
+# ==========================
 
 class User(Base):
     __tablename__ = "users"
@@ -126,7 +210,6 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=True)
 
-    # флаг админа
     is_admin = Column(Boolean, default=False)
 
     reset_code_hash = Column(String(255), nullable=True)
@@ -180,7 +263,6 @@ class User(Base):
         cascade="all, delete-orphan",
     )
 
-    # блокировки
     blocked_users = relationship(
         "Block",
         foreign_keys="Block.blocker_id",
@@ -194,21 +276,18 @@ class User(Base):
         cascade="all, delete-orphan",
     )
 
-    # push-токены
     push_tokens = relationship(
         "PushToken",
         back_populates="user",
         cascade="all, delete-orphan",
     )
 
-    # обращения в поддержку
     support_requests = relationship(
         "SupportRequest",
         back_populates="user",
         cascade="all, delete-orphan",
     )
 
-    # жалобы, отправленные пользователем
     reports = relationship(
         "ContentReport",
         back_populates="reporter",
@@ -263,7 +342,6 @@ class Post(Base):
 
     content = Column(String(1000), nullable=False)
 
-    # обложка поста (первое медиа)
     media_url = Column(String(255), nullable=True)
     media_type = Column(Enum(MediaTypeEnum), nullable=True)
 
@@ -300,7 +378,6 @@ class Post(Base):
         cascade="all, delete-orphan",
     )
 
-    # список медиа (фото/видео) для карусели
     media_items = relationship(
         "PostMedia",
         back_populates="post",
@@ -324,10 +401,7 @@ class PostMedia(Base):
     media_url = Column(String(255), nullable=False)
     media_type = Column(Enum(MediaTypeEnum), nullable=False)
 
-    # порядок в карусели
     order = Column(Integer, default=0)
-
-    # счётчик просмотров (актуально для видео)
     view_count = Column(Integer, default=0)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

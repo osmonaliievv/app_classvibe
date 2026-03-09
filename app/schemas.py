@@ -1,5 +1,3 @@
-# app/schemas.py
-
 from datetime import date, datetime
 from typing import Optional, List, Dict, Literal
 
@@ -24,7 +22,12 @@ from .models import (
 
 class Token(BaseModel):
     access_token: str
+    refresh_token: str  # Добавили для эффекта Instagram
     token_type: str = "bearer"
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
 
 
 class UserBase(BaseModel):
@@ -117,14 +120,6 @@ class RegisterPasswordRequest(BaseModel):
 
 
 class RegisterUsernameRequest(BaseModel):
-    """
-    Завершение регистрации: выбор username.
-    Разрешены только:
-      - маленькие латинские буквы a-z
-      - цифры 0-9
-      - точка .
-      - подчёркивание _
-    """
     session_id: Optional[str] = None
     registration_id: Optional[str] = None
     username: str = Field(..., min_length=3, max_length=50)
@@ -132,11 +127,8 @@ class RegisterUsernameRequest(BaseModel):
     @validator("username")
     def username_allowed_chars(cls, v: str) -> str:
         import re
-        # только маленькие латинские буквы + цифры + . _
         if not re.fullmatch(r"[a-z0-9._]+", v):
-            raise ValueError(
-                "Разрешены только маленькие латинские буквы, цифры, '.', '_'"
-            )
+            raise ValueError("Разрешены только маленькие латинские буквы, цифры, '.', '_'")
         return v
 
 
@@ -177,19 +169,13 @@ class ProfileUpdateRequest(BaseModel):
 
 
 class ChangeUsernameRequest(BaseModel):
-    """
-    Смена username уже зарегистрированным пользователем.
-    Те же правила: только маленькие латинские буквы + цифры + . _
-    """
     new_username: str = Field(..., min_length=3, max_length=50)
 
     @validator("new_username")
     def username_allowed_chars(cls, v: str) -> str:
         import re
         if not re.fullmatch(r"[a-z0-9._]+", v):
-            raise ValueError(
-                "Разрешены только маленькие латинские буквы, цифры, '.', '_'"
-            )
+            raise ValueError("Разрешены только маленькие латинские буквы, цифры, '.', '_'")
         return v
 
 
@@ -296,7 +282,6 @@ class MessageOut(BaseModel):
     is_edited: bool
     edited_at: Optional[datetime] = None
 
-    # read-status
     read_count: Optional[int] = None
     is_read_by_me: Optional[bool] = None
 
@@ -307,9 +292,6 @@ class MessageOut(BaseModel):
 class SharePostRequest(BaseModel):
     recipient_ids: List[int]
     message: Optional[str] = None
-
-
-# ------ Чаты: создание групп / каналов ------
 
 
 class ChatCreateBase(BaseModel):
@@ -329,27 +311,15 @@ class ChatUpdateRequest(BaseModel):
     title: Optional[str] = Field(None, min_length=1, max_length=255)
 
 
-# ------ Сообщения: редактирование, удаление, реакции, прочитано ------
-
-
 class MessageEditRequest(BaseModel):
     content: str = Field(..., min_length=1, max_length=1000)
 
 
 class MessageDeleteRequest(BaseModel):
-    delete_for_all: bool = False
+    delete_forall: bool = False
 
 
 class ReactionRequest(BaseModel):
-    """
-    Реакция на сообщение.
-    emoji:
-      - "🔥"
-      - "😂"
-      - "❤️"
-      - "👍"
-      - None / "" — снять реакцию
-    """
     emoji: Optional[str] = None
 
     @validator("emoji")
@@ -369,9 +339,6 @@ class MessageReadRequest(BaseModel):
 
 class FavoriteToggleResponse(BaseModel):
     is_favorite: bool
-
-
-# ------ Пин / избранное / участники ------
 
 
 class PinnedMessageOut(BaseModel):
@@ -483,24 +450,93 @@ class AdminReportActionRequest(BaseModel):
         "delete_message",
         "ban_user",
     ]
-    # если надо забанить другого юзера, не того, на кого жалоба
     ban_user_id: Optional[int] = None
     note: Optional[str] = None
 
 
-# ---------- Рейтинг классов (schools) ----------
+# ==========================
+# ✅ Жизнь школы (School Life) — схемы экрана
+# ==========================
+
+class SchoolEventOut(BaseModel):
+    id: int
+    title: str
+    cover_url: Optional[str] = None
+    starts_at: datetime
+    ends_at: Optional[datetime] = None
+    location: Optional[str] = None
+    status: Optional[str] = None
+
+    class Config:
+        from_attributes = True
 
 
-class ClassRatingItem(BaseModel):
-    place: int           # место в рейтинге (1, 2, 3, ...)
-    grade: str           # название класса: "7Б", "11A" и т.п.
-    points: int          # суммарные баллы
-    students_count: int  # сколько уникальных учеников участвовали
+class SchoolEventCreateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    cover_url: Optional[str] = None
+    starts_at: datetime
+    ends_at: Optional[datetime] = None
+    location: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=2000)
+    status: Optional[Literal["draft", "published", "cancelled"]] = "published"
+    school_name: Optional[str] = None
 
 
-class ClassRatingResponse(BaseModel):
-    school_name: str                     # школа, по которой строится рейтинг
-    my_class: Optional[str] = None       # класс текущего пользователя
-    my_class_place: Optional[int] = None
-    my_class_points: Optional[int] = None
-    items: List[ClassRatingItem]
+class SchoolEventUpdateRequest(BaseModel):
+    title: Optional[str] = Field(None, min_length=1, max_length=255)
+    cover_url: Optional[str] = None
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+    location: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=2000)
+    status: Optional[Literal["draft", "published", "cancelled"]] = None
+    school_name: Optional[str] = None
+
+
+class AchievementOut(BaseModel):
+    id: int
+    title: str
+    description: Optional[str] = None
+    cover_url: Optional[str] = None
+    achieved_at: Optional[datetime] = None
+    target: str
+    grade: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class AchievementCreateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = Field(None, max_length=2000)
+    cover_url: Optional[str] = None
+    achieved_at: Optional[datetime] = None
+    target: Literal["school", "grade"] = "school"
+    grade: Optional[str] = None
+    school_name: Optional[str] = None
+
+
+class AchievementUpdateRequest(BaseModel):
+    title: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = Field(None, max_length=2000)
+    cover_url: Optional[str] = None
+    achieved_at: Optional[datetime] = None
+    target: Optional[Literal["school", "grade"]] = None
+    grade: Optional[str] = None
+    school_name: Optional[str] = None
+
+
+class ActiveClassItem(BaseModel):
+    grade: str
+    status: Literal["creative", "study", "friendly", "creative_art", "sport"]
+    label: str
+
+
+class SchoolLifeResponse(BaseModel):
+    school_name: str
+    events: List[SchoolEventOut]
+    best_posts: List[PostOut]
+    active_classes: List[ActiveClassItem]
+    achievements: List[AchievementOut]
+    week_start: datetime
+    week_end: datetime

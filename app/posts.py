@@ -151,7 +151,7 @@ def create_post(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    # сначала создаём сам пост (может быть с одиночным media_url/media_type)
+    # ✅ создаём пост (одиночное медиа: media_url + media_type)
     post = Post(
         user_id=current_user.id,
         content=payload.content,
@@ -161,22 +161,8 @@ def create_post(
     db.add(post)
     db.flush()  # получаем post.id
 
-    # если пришёл список media — создаём PostMedia и обновляем обложку
-    if payload.media:
-        media_items = []
-        for i, m in enumerate(payload.media):
-            item = PostMedia(
-                post_id=post.id,
-                media_url=m.media_url,
-                media_type=m.media_type,
-                order=m.order if m.order is not None else i,
-            )
-            db.add(item)
-            media_items.append(item)
-
-        if media_items:
-            post.media_url = media_items[0].media_url
-            post.media_type = media_items[0].media_type
+    # ✅ УБРАЛИ payload.media, потому что в PostCreate его нет
+    # (если хочешь галерею из нескольких медиа — сделаем позже через отдельную схему)
 
     if current_user.posts_count is not None:
         current_user.posts_count += 1
@@ -189,7 +175,6 @@ def create_post(
     create_post_mentions(db, post, current_user)
 
     return post
-
 
 # ------------------ ПРОСТО СПИСОК ВСЕХ ПОСТОВ ------------------ #
 

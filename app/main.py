@@ -1,12 +1,9 @@
-# app/main.py
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
 
-from .database import Base, engine   # можно оставить, даже если Base не используется
-from . import models  # 👈 ВАЖНО: чтобы SQLAlchemy знала о всех таблицах
+from . import models
 
 from .auth import router as auth_router
 from .profile import router as profile_router
@@ -17,17 +14,13 @@ from .users import router as users_router
 from .notifications import router as notifications_router
 from .block import router as block_router
 from .settings import router as settings_router
-from .schools import router as schools_router
 from .reports import router as reports_router
-from .admin import router as admin_router   # 👈 как было
+from .admin import router as admin_router
 
-# ❌ ЭТУ СТРОКУ УДАЛЯЕМ / КОММЕНТИРУЕМ
-# Base.metadata.create_all(bind=engine)
+# ✅ вместо schools.py
+from .school_life import router as school_life_router
 
-app = FastAPI(
-    title="ClassVibe API",
-    version="1.0.0",
-)
+app = FastAPI(title="ClassVibe API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -50,11 +43,10 @@ app.include_router(users_router)
 app.include_router(notifications_router)
 app.include_router(block_router)
 app.include_router(settings_router)
-app.include_router(schools_router)
+app.include_router(school_life_router)  # ✅
 app.include_router(reports_router)
 app.include_router(admin_router)
 
-
 @app.get("/")
 def root():
-    return {"message": "ClassVibe API is running "}
+    return {"message": "ClassVibe API is running"}
