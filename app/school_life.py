@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, desc
 
 from .database import get_db
@@ -58,6 +58,7 @@ def _best_posts_school(
 
     return (
         db.query(Post)
+        .options(joinedload(Post.author))
         .join(User, User.id == Post.user_id)
         .filter(
             User.school_name == school_name,
@@ -271,15 +272,15 @@ def get_school_life(
         .all()
     )
 
-    return SchoolLifeResponse(
-        school_name=target_school,
-        events=events,
-        best_posts=best_posts,
-        active_classes=active_classes,
-        achievements=achievements,
-        week_start=week_start,
-        week_end=week_end,
-    )
+    return {
+        "school_name": target_school,
+        "events": events,
+        "best_posts": best_posts,
+        "active_classes": active_classes,
+        "achievements": achievements,
+        "week_start": week_start,
+        "week_end": week_end,
+    }
 
 
 # -------- Events (admin) --------

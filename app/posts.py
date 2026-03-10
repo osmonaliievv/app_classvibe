@@ -13,7 +13,6 @@ from fastapi import (
     HTTPException,
     Response,
 )
-from sqlalchemy.orm import Session
 
 from .database import get_db
 from .auth import get_current_user
@@ -138,7 +137,6 @@ def create_post(
         db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
 ):
-    # ✅ создаём пост (одиночное медиа: media_url + media_type)
     post = Post(
         user_id=current_user.id,
         content=payload.content,
@@ -146,10 +144,7 @@ def create_post(
         media_type=payload.media_type,
     )
     db.add(post)
-    db.flush()  # получаем post.id
-
-    # ✅ УБРАЛИ payload.media, потому что в PostCreate его нет
-    # (если хочешь галерею из нескольких медиа — сделаем позже через отдельную схему)
+    db.flush()
 
     if current_user.posts_count is not None:
         current_user.posts_count += 1
@@ -158,7 +153,6 @@ def create_post(
     db.commit()
     db.refresh(post)
 
-    # обработка @username в тексте поста
     create_post_mentions(db, post, current_user)
 
     return post
@@ -176,12 +170,26 @@ def list_posts(
 ):
     posts = (
         db.query(Post)
+        .options(joinedload(Post.author))  # Оптимизация подгрузки автора
         .filter(Post.is_deleted == False)  # noqa
         .order_by(Post.created_at.desc())
         .offset(offset)
         .limit(limit)
         .all()
     )
+    # Внутри цикла обработки постов перед return:
+    for p in posts:
+        p.is_liked = db.query(models.PostLike).filter(
+            models.PostLike.post_id == p.id,
+            models.PostLike.user_id == current_user.id
+        ).first() is not None
+
+        # Репосты считаем по сообщениям типа post_share
+        p.share_count = db.query(models.Message).filter(
+            models.Message.post_id == p.id,
+            models.Message.type == models.MessageTypeEnum.post_share
+        ).count()
+
     return posts
 
 
@@ -195,7 +203,6 @@ def feed(
         db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
 ):
-    # 1) список подписок
     follows = (
         db.query(Follow)
         .filter(Follow.follower_id == current_user.id)
@@ -204,19 +211,16 @@ def feed(
     followed_ids = [f.following_id for f in follows]
     followed_set = set(followed_ids)
 
-    # 2) базовый запрос
     query = (
         db.query(Post, User)
         .join(User, User.id == Post.user_id)
         .filter(Post.is_deleted == False)  # noqa
     )
 
-    # если есть подписки — показываем только свои + подписки
     if followed_ids:
         allowed_ids = followed_ids + [current_user.id]
         query = query.filter(Post.user_id.in_(allowed_ids))
 
-    # 3) берём пул и сортируем в Python по score
     raw_rows = (
         query.order_by(Post.created_at.desc())
         .limit(200)
@@ -238,7 +242,6 @@ def feed(
 
     scored.sort(key=lambda x: x[0], reverse=True)
 
-    # применяем offset/limit к отсортированному списку
     slice_scored = scored[offset: offset + limit]
     posts = [p for _, p in slice_scored]
 
@@ -301,9 +304,7 @@ def update_post(
     if payload.media_type is not None:
         post.media_type = payload.media_type
 
-    # если передан список media — полностью пересоздаём его
     if payload.media is not None:
-        # удаляем старые медиа
         for item in list(post.media_items):
             db.delete(item)
         db.flush()
@@ -327,7 +328,6 @@ def update_post(
     db.commit()
     db.refresh(post)
 
-    # пересоздаём упоминания
     create_post_mentions(db, post, current_user)
 
     return post
@@ -491,10 +491,8 @@ def add_comment(
     db.commit()
     db.refresh(comment)
 
-    # обработка @username в комментарии
     create_comment_mentions(db, comment, current_user)
 
-    # уведомления
     if post.user_id != current_user.id:
         create_notification(
             db=db,
@@ -539,6 +537,7 @@ def list_comments(
 
     comments = (
         db.query(Comment)
+        .options(joinedload(Comment.user))  # Оптимизация подгрузки данных юзера
         .filter(Comment.post_id == post_id, Comment.is_deleted == False)  # noqa
         .order_by(Comment.created_at.asc())
         .all()
@@ -558,10 +557,7 @@ def like_comment(
         .first()
     )
     if not comment:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Комментарий не найден",
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Комментарий не найден")
 
     existing_like = (
         db.query(CommentLike)
@@ -692,37 +688,46 @@ def add_media_view(
     return SimpleMessage(message="Просмотр засчитан")
 
 
+# ... (импорты без изменений) ...
+
+# Вспомогательная функция для заполнения постов данными
+def _attach_post_info(post: Post, current_user_id: int, db: Session):
+    # Проверка лайка
+    is_liked = db.query(PostLike).filter(
+        PostLike.post_id == post.id,
+        PostLike.user_id == current_user_id
+    ).first() is not None
+
+    # Репосты считаем по таблице Message, где указан post_id
+    share_count = db.query(Message).filter(
+        Message.post_id == post.id,
+        Message.type == MessageTypeEnum.post_share
+    ).count()
+
+    post.is_liked = is_liked
+    post.share_count = share_count
+    return post
+
+
 @router.get("/", response_model=List[PostOut])
-def list_posts(
-        limit: int = 20,
-        offset: int = 0,
-        db: Session = Depends(get_db),
-        current_user=Depends(get_current_user),
-):
-    posts = (
-        db.query(Post)
-        .options(joinedload(Post.author))  # Подгружаем автора
-        .filter(Post.is_deleted == False)
-        .order_by(Post.created_at.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
+def list_posts(limit: int = 20, offset: int = 0, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    posts = db.query(Post).options(joinedload(Post.author)).filter(Post.is_deleted == False).order_by(
+        Post.created_at.desc()).offset(offset).limit(limit).all()
+    for p in posts:
+        _attach_post_info(p, current_user.id, db)
     return posts
 
 
-@router.get("/{post_id}/comments", response_model=List[CommentOut])
-def list_comments(
-        post_id: int,
-        db: Session = Depends(get_db),
-        current_user=Depends(get_current_user),
-):
-    # ... (проверка существования поста)
-    comments = (
-        db.query(Comment)
-        .options(joinedload(Comment.user))  # Подгружаем данные юзера
-        .filter(Comment.post_id == post_id, Comment.is_deleted == False)
-        .order_by(Comment.created_at.asc())
-        .all()
-    )
-    return comments
+# ИСПРАВЛЕНИЕ 404: теперь принимаем post_id
+@router.post("/{post_id}/view", response_model=SimpleMessage)
+def add_post_view(post_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    post = db.query(Post).filter(Post.id == post_id, Post.is_deleted == False).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Пост не найден")
+
+    post.view_count += 1
+    db.add(post)
+    db.commit()
+    return SimpleMessage(message="Просмотр засчитан")
+
+# ... (остальной файл, не забудь применить _attach_post_info во всех GET эндпоинтах) ...

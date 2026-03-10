@@ -49,6 +49,7 @@ class UserBase(BaseModel):
     posts_count: int = 0
     followers_count: int = 0
     following_count: int = 0
+    is_following: bool = False
 
     class Config:
         from_attributes = True
@@ -203,6 +204,9 @@ class PostOut(PostBase):
     media_type: Optional[MediaTypeEnum] = None
     like_count: int
     comment_count: int
+    view_count: int = 0
+    share_count: int = 0
+    is_liked: bool = False
     created_at: datetime
     author: Optional[UserShort] = None
 

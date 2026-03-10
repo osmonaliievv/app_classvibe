@@ -347,6 +347,8 @@ class Post(Base):
 
     like_count = Column(Integer, default=0)
     comment_count = Column(Integer, default=0)
+    view_count = Column(Integer, default=0)
+    share_count = Column(Integer, default=0)
     is_deleted = Column(Boolean, default=False)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

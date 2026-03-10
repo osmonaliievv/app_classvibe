@@ -245,32 +245,27 @@ manager = ConnectionManager()
 
 
 @router.get("/", response_model=List[schemas.ChatOut])
-def list_my_chats(
-        chat_type: models.ChatTypeEnum | None = None,
-        search: str | None = None,
-        db: Session = Depends(get_db),
-        current_user=Depends(get_current_user),
-):
-    q = (
-        db.query(models.Chat)
-        .join(models.ChatParticipant)
-        .filter(
-            models.ChatParticipant.user_id == current_user.id,
-            models.Chat.is_deleted == False,
-        )
-    )
+def list_my_chats(chat_type: models.ChatTypeEnum | None = None, search: str | None = None,
+                  db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    q = db.query(models.Chat).join(models.ChatParticipant).filter(models.ChatParticipant.user_id == current_user.id,
+                                                                  models.Chat.is_deleted == False)
+    # ... (фильтры) ...
+    chats = q.order_by(models.Chat.updated_at.desc()).all()
 
-    if chat_type:
-        q = q.filter(models.Chat.type == chat_type)
+    result: List[schemas.ChatOut] = []
+    for chat in chats:
+        title = chat.title
+        avatar_url = chat.avatar_url
 
-    if search:
-        like = f"%{search.lower()}%"
-        q = q.filter(
-            or_(
-                func.lower(models.Chat.title).ilike(like),
-                models.Chat.type == ChatTypeEnum.private,
-            )
-        )
+        # ЛОГИКА ДЛЯ ПРИВАТНЫХ ЧАТОВ
+        if chat.type == models.ChatTypeEnum.private:
+            other_part = db.query(models.ChatParticipant).join(models.User).filter(
+                models.ChatParticipant.chat_id == chat.id,
+                models.ChatParticipant.user_id != current_user.id
+            ).first()
+            if other_part and other_part.user:
+                title = f"{other_part.user.first_name} {other_part.user.last_name}"
+                avatar_url = other_part.user.avatar_url
 
     chats = q.order_by(models.Chat.updated_at.desc()).all()
 
