@@ -450,6 +450,8 @@ class AdminDashboardOut(BaseModel):
     comments_total: int
     messages_total: int
     reports_open: int
+    likes_count: Optional[int]
+    active_chats: Optional[int]
 
 
 class AdminReportItem(BaseModel):
