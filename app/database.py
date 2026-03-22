@@ -50,3 +50,5 @@ def get_db():
         yield db
     finally:
         db.close()
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

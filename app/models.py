@@ -59,8 +59,7 @@ class NotificationTypeEnum(str, enum.Enum):
     comment_replied = "comment_replied"
     new_message = "new_message"
     post_shared = "post_shared"
-    mention = "mention"  # @упоминания
-    # ❌ class_rating убрали (геймификация не нужна)
+    mention = "mention"
 
 
 class PushPlatformEnum(str, enum.Enum):
@@ -75,9 +74,6 @@ class SupportRequestStatusEnum(str, enum.Enum):
     resolved = "resolved"
 
 
-# ---------- Жалобы на контент ----------
-
-
 class ReportTargetTypeEnum(str, enum.Enum):
     post = "post"
     comment = "comment"
@@ -87,17 +83,13 @@ class ReportTargetTypeEnum(str, enum.Enum):
 
 class ReportReasonEnum(str, enum.Enum):
     spam = "spam"
-    nudity = "nudity"  # 18+
+    nudity = "nudity"
     violence = "violence"
     hate = "hate"
     bullying = "bullying"
     illegal = "illegal"
     other = "other"
 
-
-# ==========================
-# ✅ Жизнь школы (School Life)
-# ==========================
 
 class EventStatusEnum(str, enum.Enum):
     draft = "draft"
@@ -107,7 +99,7 @@ class EventStatusEnum(str, enum.Enum):
 
 class AchievementTargetEnum(str, enum.Enum):
     school = "school"
-    grade = "grade"  # класс (например "7Б")
+    grade = "grade"
 
 
 class SchoolEvent(Base):
@@ -161,7 +153,7 @@ class SchoolAchievement(Base):
     school_name = Column(String(255), nullable=True, index=True)
 
     target = Column(Enum(AchievementTargetEnum), nullable=False, default=AchievementTargetEnum.school)
-    grade = Column(String(50), nullable=True, index=True)  # если target=grade
+    grade = Column(String(50), nullable=True, index=True)
 
     title = Column(String(255), nullable=False)
     description = Column(String(2000), nullable=True)
@@ -174,10 +166,6 @@ class SchoolAchievement(Base):
 
     created_by = relationship("User")
 
-
-# ==========================
-# Основные модели приложения
-# ==========================
 
 class User(Base):
     __tablename__ = "users"
@@ -211,6 +199,8 @@ class User(Base):
     is_verified = Column(Boolean, default=True)
 
     is_admin = Column(Boolean, default=False)
+    is_school_admin = Column(Boolean, default=False)
+    notifications_enabled = Column(Boolean, default=True, nullable=False)
 
     reset_code_hash = Column(String(255), nullable=True)
     reset_code_expires_at = Column(DateTime, nullable=True)
@@ -231,6 +221,11 @@ class User(Base):
     )
     post_likes = relationship(
         "PostLike",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    post_views = relationship(
+        "PostView",
         back_populates="user",
         cascade="all, delete-orphan",
     )
@@ -365,6 +360,11 @@ class Post(Base):
         back_populates="post",
         cascade="all, delete-orphan",
     )
+    views = relationship(
+        "PostView",
+        back_populates="post",
+        cascade="all, delete-orphan",
+    )
     comments = relationship(
         "Comment",
         back_populates="post",
@@ -437,6 +437,34 @@ class PostLike(Base):
 
     post = relationship("Post", back_populates="likes")
     user = relationship("User", back_populates="post_likes")
+
+
+class PostView(Base):
+    __tablename__ = "post_views"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    post_id = Column(
+        Integer,
+        ForeignKey("posts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("post_id", "user_id", name="uq_post_view_post_user"),
+    )
+
+    post = relationship("Post", back_populates="views")
+    user = relationship("User", back_populates="post_views")
 
 
 class Comment(Base):

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import joinedload
 
 from fastapi import (
@@ -11,10 +11,12 @@ from fastapi import (
     WebSocketDisconnect,
     UploadFile,
     File,
+    Form,  # Добавлено для FormData
 )
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 import os
+import json  # Добавлено для парсинга
 from uuid import uuid4
 
 from .database import get_db
@@ -32,6 +34,54 @@ os.makedirs(os.path.join(MEDIA_ROOT, CHATS_SUBDIR), exist_ok=True)
 
 
 # ---------- Вспомогательные функции ----------
+
+
+async def _save_avatar(file: UploadFile, chat_id: int) -> str:
+    """Вспомогательная функция для сохранения файла аватарки"""
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Можно загружать только изображения")
+
+    ext = os.path.splitext(file.filename)[1] or ".png"
+    # Добавляем uuid для уникальности имени файла
+    filename = f"chat_avatar_{chat_id}_{uuid4().hex[:8]}{ext}"
+    save_dir = os.path.join(MEDIA_ROOT, "chat_avatars")
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, filename)
+
+    with open(save_path, "wb") as f:
+        content = await file.read()
+        f.write(content)
+
+    return f"/media/chat_avatars/{filename}"
+
+
+def _parse_participant_ids(ids_data: Any) -> set:
+    """Парсит participant_ids, которые могут прийти как список полей, JSON строка или байты"""
+    if not ids_data:
+        return set()
+
+    # Если данные пришли в бинарном виде (иногда случается в формах)
+    if isinstance(ids_data, bytes):
+        ids_data = ids_data.decode()
+
+    if isinstance(ids_data, str):
+        try:
+            parsed = json.loads(ids_data)
+            if isinstance(parsed, list):
+                return set(int(i) for i in parsed)
+            return {int(parsed)}
+        except:
+            # Если прислали просто строку через запятую "1,2,3"
+            return set(int(i) for i in ids_data.split(",") if i.strip())
+
+    # Если данные уже пришли списком от FastAPI
+    if isinstance(ids_data, list):
+        return set(int(i) for i in ids_data)
+
+    try:
+        return {int(ids_data)}
+    except:
+        return set()
 
 
 def get_or_create_direct_chat(
@@ -128,7 +178,6 @@ def _create_message_and_notify(
     db.add(msg)
     db.flush()
 
-    # read-status: сразу считаем, что сообщение "доставлено" всем участникам
     participants = (
         db.query(models.ChatParticipant)
         .filter(models.ChatParticipant.chat_id == chat.id)
@@ -151,7 +200,6 @@ def _create_message_and_notify(
     db.commit()
     db.refresh(msg)
 
-    # уведомления всем участникам, кроме отправителя
     for p in participants:
         if p.user_id == sender.id:
             continue
@@ -169,21 +217,33 @@ def _create_message_and_notify(
 
 def _serialize_message(msg: models.Message, current_user_id: int | None = None) -> Dict[str, Any]:
     base = schemas.MessageOut.from_orm(msg)
+    data = base.model_dump()
 
-    # считаем read-status
+    if msg.sender:
+        data["sender"] = {
+            "id": msg.sender.id,
+            "username": msg.sender.username,
+            "first_name": msg.sender.first_name,
+            "last_name": msg.sender.last_name,
+            "avatar_url": msg.sender.avatar_url
+        }
+
     read_count = sum(1 for s in msg.statuses if s.is_read)
     is_read_by_me = (
-        any(
-            s.user_id == current_user_id and s.is_read
-            for s in msg.statuses
-        )
+        any(s.user_id == current_user_id and s.is_read for s in msg.statuses)
         if current_user_id is not None
         else False
     )
 
-    data = base.model_dump()
     data["read_count"] = read_count
     data["is_read_by_me"] = is_read_by_me
+
+    # ✅ Добавь reactions
+    data["reactions"] = [
+        {"emoji": r.emoji, "user_id": r.user_id}
+        for r in msg.reactions
+    ] if msg.reactions else []
+
     return data
 
 
@@ -214,7 +274,6 @@ def _ensure_chat_admin(db: Session, chat: models.Chat, user_id: int):
 
 class ConnectionManager:
     def __init__(self):
-        # chat_id -> list[(WebSocket, user_id)]
         self.active_connections: Dict[int, List[Dict[str, Any]]] = {}
 
     async def connect(self, chat_id: int, user_id: int, websocket: WebSocket):
@@ -249,7 +308,10 @@ def list_my_chats(chat_type: models.ChatTypeEnum | None = None, search: str | No
                   db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     q = db.query(models.Chat).join(models.ChatParticipant).filter(models.ChatParticipant.user_id == current_user.id,
                                                                   models.Chat.is_deleted == False)
-    # ... (фильтры) ...
+
+    if chat_type:
+        q = q.filter(models.Chat.type == chat_type)
+
     chats = q.order_by(models.Chat.updated_at.desc()).all()
 
     result: List[schemas.ChatOut] = []
@@ -257,7 +319,6 @@ def list_my_chats(chat_type: models.ChatTypeEnum | None = None, search: str | No
         title = chat.title
         avatar_url = chat.avatar_url
 
-        # ЛОГИКА ДЛЯ ПРИВАТНЫХ ЧАТОВ
         if chat.type == models.ChatTypeEnum.private:
             other_part = db.query(models.ChatParticipant).join(models.User).filter(
                 models.ChatParticipant.chat_id == chat.id,
@@ -267,10 +328,6 @@ def list_my_chats(chat_type: models.ChatTypeEnum | None = None, search: str | No
                 title = f"{other_part.user.first_name} {other_part.user.last_name}"
                 avatar_url = other_part.user.avatar_url
 
-    chats = q.order_by(models.Chat.updated_at.desc()).all()
-
-    result: List[schemas.ChatOut] = []
-    for chat in chats:
         last_msg = (
             db.query(models.Message)
             .filter(
@@ -294,8 +351,8 @@ def list_my_chats(chat_type: models.ChatTypeEnum | None = None, search: str | No
         item = schemas.ChatOut(
             id=chat.id,
             type=chat.type,
-            title=chat.title,
-            avatar_url=chat.avatar_url,
+            title=title,
+            avatar_url=avatar_url,
             last_message_preview=preview,
             last_message_at=last_at,
         )
@@ -324,7 +381,6 @@ def list_messages(
             detail="Нет доступа к чату",
         )
 
-    # исключаем сообщения, скрытые "только для меня" через MessageStatus.is_hidden
     messages = (
         db.query(models.Message)
         .options(joinedload(models.Message.sender))
@@ -523,8 +579,7 @@ def delete_message(
     if not participant:
         raise HTTPException(status_code=403, detail="Нет доступа к чату")
 
-    if payload.delete_for_all:
-        # удалить для всех может только отправитель или админ
+    if payload.delete_forall:
         is_admin = False
         if chat.type != ChatTypeEnum.private:
             admin_part = (
@@ -547,7 +602,6 @@ def delete_message(
         msg.is_deleted = True
         db.add(msg)
     else:
-        # delete for me — помечаем в MessageStatus как скрытое
         status_row = (
             db.query(models.MessageStatus)
             .filter(
@@ -603,7 +657,6 @@ def set_reaction(
     )
 
     if not payload.emoji:
-        # снять реакцию
         if existing:
             db.delete(existing)
             db.commit()
@@ -735,7 +788,6 @@ def pin_message(
     if not msg:
         raise HTTPException(status_code=404, detail="Сообщение не найдено")
 
-    # деактивируем предыдущие пины
     (
         db.query(models.PinnedMessage)
         .filter(
@@ -841,21 +893,28 @@ def open_direct_chat(
 
 
 @router.post("/group", response_model=schemas.ChatOut, status_code=status.HTTP_201_CREATED)
-def create_group_chat(
-        payload: schemas.GroupChatCreateRequest,
+async def create_group_chat(
+        title: str = Form(...),
+        participant_ids: str = Form(...),
+        avatar_url: Optional[UploadFile] = File(None),
         db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
 ):
+    """СОЗДАНИЕ ГРУППЫ С АВАТАРКОЙ ОДНИМ ЗАПРОСОМ"""
     now = datetime.utcnow()
     chat = models.Chat(
         type=models.ChatTypeEnum.group,
-        title=payload.title,
+        title=title,
         created_by_id=current_user.id,
         created_at=now,
         updated_at=now,
     )
     db.add(chat)
-    db.flush()
+    db.flush()  # Получаем chat.id
+
+    # ✅ Сохраняем фото, если оно пришло в запросе
+    if avatar_url:
+        chat.avatar_url = await _save_avatar(avatar_url, chat.id)
 
     creator_part = models.ChatParticipant(
         chat_id=chat.id,
@@ -864,7 +923,8 @@ def create_group_chat(
     )
     db.add(creator_part)
 
-    unique_ids = set(pid for pid in payload.participant_ids if pid != current_user.id)
+    ids = _parse_participant_ids(participant_ids)
+    unique_ids = set(pid for pid in ids if pid != current_user.id)
     if unique_ids:
         users = (
             db.query(models.User)
@@ -877,32 +937,31 @@ def create_group_chat(
     db.commit()
     db.refresh(chat)
 
-    return schemas.ChatOut(
-        id=chat.id,
-        type=chat.type,
-        title=chat.title,
-        avatar_url=chat.avatar_url,
-        last_message_preview=None,
-        last_message_at=None,
-    )
+    return chat
 
 
 @router.post("/channel", response_model=schemas.ChatOut, status_code=status.HTTP_201_CREATED)
-def create_channel(
-        payload: schemas.ChannelChatCreateRequest,
+async def create_channel(
+        title: str = Form(...),
+        participant_ids: str = Form(...),
+        avatar_url: Optional[UploadFile] = File(None),
         db: Session = Depends(get_db),
         current_user=Depends(get_current_user),
 ):
+    """СОЗДАНИЕ КАНАЛА С АВАТАРКОЙ ОДНИМ ЗАПРОСОМ"""
     now = datetime.utcnow()
     chat = models.Chat(
         type=models.ChatTypeEnum.channel,
-        title=payload.title,
+        title=title,
         created_by_id=current_user.id,
         created_at=now,
         updated_at=now,
     )
     db.add(chat)
     db.flush()
+
+    if avatar_url:
+        chat.avatar_url = await _save_avatar(avatar_url, chat.id)
 
     creator_part = models.ChatParticipant(
         chat_id=chat.id,
@@ -911,7 +970,8 @@ def create_channel(
     )
     db.add(creator_part)
 
-    unique_ids = set(pid for pid in payload.participant_ids if pid != current_user.id)
+    ids = _parse_participant_ids(participant_ids)
+    unique_ids = set(pid for pid in ids if pid != current_user.id)
     if unique_ids:
         users = (
             db.query(models.User)
@@ -924,14 +984,7 @@ def create_channel(
     db.commit()
     db.refresh(chat)
 
-    return schemas.ChatOut(
-        id=chat.id,
-        type=chat.type,
-        title=chat.title,
-        avatar_url=chat.avatar_url,
-        last_message_preview=None,
-        last_message_at=None,
-    )
+    return chat
 
 
 # ------- Админ-панель групп/каналов -------

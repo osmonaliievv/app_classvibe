@@ -75,23 +75,14 @@ class SupportRequestItem(BaseModel):
     created_at: datetime
 
     class Config:
-        from_attributes = True  # для работы с ORM-моделями
+        from_attributes = True
 
 
 # ---------- Вспомогательные функции ----------
 
-def _get_notifications_enabled(db: Session, user: User) -> bool:
-
-    active_tokens_exists = (
-            db.query(PushToken)
-            .filter(
-                PushToken.user_id == user.id,
-                PushToken.is_active.is_(True),
-            )
-            .first()
-            is not None
-    )
-    return active_tokens_exists
+def _get_notifications_enabled(user: User) -> bool:
+    # ✅ Берём значение прямо из поля пользователя
+    return bool(getattr(user, "notifications_enabled", True))
 
 
 # ---------- Основные настройки ----------
@@ -101,13 +92,10 @@ def get_settings(
         db: Session = Depends(get_db),
         current_user: User = Depends(get_current_user),
 ):
-
-    notifications_enabled = _get_notifications_enabled(db, current_user)
-
     return SettingsInfoResponse(
         phone=current_user.phone,
         email=current_user.email,
-        notifications_enabled=notifications_enabled,
+        notifications_enabled=_get_notifications_enabled(current_user),
     )
 
 
@@ -117,7 +105,6 @@ def change_password(
         db: Session = Depends(get_db),
         current_user: User = Depends(get_current_user),
 ):
-
     if not verify_password(payload.old_password, current_user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -143,7 +130,6 @@ def update_phone(
         db: Session = Depends(get_db),
         current_user: User = Depends(get_current_user),
 ):
-
     new_phone = payload.phone.strip()
 
     if current_user.phone == new_phone:
@@ -180,7 +166,6 @@ def update_email(
         db: Session = Depends(get_db),
         current_user: User = Depends(get_current_user),
 ):
-
     new_email = payload.email.strip().lower()
 
     if current_user.email and current_user.email.lower() == new_email:
@@ -217,18 +202,24 @@ def toggle_notifications(
         db: Session = Depends(get_db),
         current_user: User = Depends(get_current_user),
 ):
+    # ✅ Сохраняем в поле пользователя
+    current_user.notifications_enabled = payload.enabled
+    db.add(current_user)
 
+    # ✅ Также обновляем push токены если есть
     db.query(PushToken).filter(
         PushToken.user_id == current_user.id,
     ).update(
         {"is_active": payload.enabled},
         synchronize_session=False,
     )
+
     db.commit()
+    db.refresh(current_user)
 
     return {
         "detail": "Настройки уведомлений обновлены.",
-        "notifications_enabled": payload.enabled,
+        "notifications_enabled": current_user.notifications_enabled,
     }
 
 
@@ -236,7 +227,6 @@ def toggle_notifications(
 
 @router.get("/about", response_model=AboutAppResponse)
 def get_about_app():
-
     return AboutAppResponse(
         name="ClassVibe",
         version="1.0.0",
@@ -251,7 +241,6 @@ def get_about_app():
 
 @router.get("/terms", response_model=TermsResponse)
 def get_terms():
-
     return TermsResponse(
         title="Условия использования ClassVibe",
         content=(
@@ -271,7 +260,6 @@ def report_problem(
         db: Session = Depends(get_db),
         current_user: User = Depends(get_current_user),
 ):
-
     support = SupportRequest(
         user_id=current_user.id,
         subject=payload.subject,
@@ -297,7 +285,6 @@ def get_my_reports(
         db: Session = Depends(get_db),
         current_user: User = Depends(get_current_user),
 ):
-
     items = (
         db.query(SupportRequest)
         .filter(SupportRequest.user_id == current_user.id)

@@ -17,12 +17,9 @@ from .models import (
 )
 
 
-# ---------- Общие ----------
-
-
 class Token(BaseModel):
     access_token: str
-    refresh_token: str  # Добавили для эффекта Instagram
+    refresh_token: str
     token_type: str = "bearer"
 
 
@@ -68,9 +65,6 @@ class UserShort(BaseModel):
 
 class SimpleMessage(BaseModel):
     message: str
-
-
-# ---------- Аутентификация / регистрация ----------
 
 
 class LoginRequest(BaseModel):
@@ -155,9 +149,6 @@ class ChangePasswordRequest(BaseModel):
     new_password_confirm: str = Field(..., min_length=8)
 
 
-# ---------- Профиль ----------
-
-
 class ProfileUpdateRequest(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
@@ -178,9 +169,6 @@ class ChangeUsernameRequest(BaseModel):
         if not re.fullmatch(r"[a-z0-9._]+", v):
             raise ValueError("Разрешены только маленькие латинские буквы, цифры, '.', '_'")
         return v
-
-
-# ---------- Посты / комментарии ----------
 
 
 class PostBase(BaseModel):
@@ -260,9 +248,6 @@ class CommentLikeResponse(BaseModel):
     like_count: int
 
 
-# ---------- Чаты ----------
-
-
 class ChatOut(BaseModel):
     id: int
     type: ChatTypeEnum
@@ -286,6 +271,14 @@ class MessageCreate(MessageBase):
     pass
 
 
+class MessageReactionOut(BaseModel):
+    emoji: str
+    user_id: int
+
+    class Config:
+        from_attributes = True
+
+
 class MessageOut(BaseModel):
     id: int
     chat_id: int
@@ -293,9 +286,9 @@ class MessageOut(BaseModel):
     sender: Optional[UserShort] = None
     type: MessageTypeEnum
     content: Optional[str]
-    post_id: Optional[int]
-    media_url: Optional[str]
-    media_type: Optional[MediaTypeEnum]
+    post_id: Optional[int] = None
+    media_url: Optional[str] = None
+    media_type: Optional[MediaTypeEnum] = None
     created_at: datetime
     is_deleted: bool
     is_edited: bool
@@ -303,6 +296,7 @@ class MessageOut(BaseModel):
 
     read_count: Optional[int] = None
     is_read_by_me: Optional[bool] = None
+    reactions: List[MessageReactionOut] = []
 
     class Config:
         from_attributes = True
@@ -391,9 +385,6 @@ class ParticipantShort(BaseModel):
         from_attributes = True
 
 
-# ------ Уведомления ------
-
-
 class NotificationOut(BaseModel):
     id: int
     type: NotificationTypeEnum
@@ -413,15 +404,9 @@ class NotificationOut(BaseModel):
         return v
 
 
-# ------ Push / FCM ------
-
-
 class PushRegisterRequest(BaseModel):
     platform: PushPlatformEnum
     token: str
-
-
-# ------ Админка: пользователи, жалобы, дашборд ------
 
 
 class AdminUserShort(BaseModel):
@@ -485,11 +470,6 @@ class AdminReportActionRequest(BaseModel):
     ]
     ban_user_id: Optional[int] = None
     note: Optional[str] = None
-
-
-# ==========================
-# ✅ Жизнь школы (School Life) — схемы экрана
-# ==========================
 
 class SchoolEventOut(BaseModel):
     id: int
