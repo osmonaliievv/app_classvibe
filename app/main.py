@@ -135,7 +135,6 @@ class AdminAuth(AuthenticationBackend):
 
 admin_auth = AdminAuth(secret_key=SECRET_KEY)
 
-
 # =========================================================
 # Middlewares
 # =========================================================
@@ -151,7 +150,6 @@ app.add_middleware(
     SessionMiddleware,
     secret_key=SECRET_KEY,
 )
-
 
 # =========================================================
 # SQLAdmin visual admin panel
@@ -181,7 +179,6 @@ class UserAdmin(ModelView, model=User):
         User.is_active,
     ]
     column_searchable_list = [User.username, User.email]
-    column_filters = [User.is_admin, User.is_school_admin, User.is_active, User.role]
 
     def is_visible(self, request: Request) -> bool:
         return is_super_admin(request)
@@ -366,7 +363,6 @@ admin.add_view(ReportAdmin)
 admin.add_view(SchoolEventAdmin)
 admin.add_view(SchoolAchievementAdmin)
 
-
 # =========================================================
 # Static/media
 # =========================================================
@@ -374,12 +370,10 @@ MEDIA_DIR = "media"
 os.makedirs(MEDIA_DIR, exist_ok=True)
 app.mount("/media", StaticFiles(directory="media"), name="media")
 
-
 # =========================================================
 # DB init
 # =========================================================
 models.Base.metadata.create_all(bind=engine)
-
 
 # =========================================================
 # Routers

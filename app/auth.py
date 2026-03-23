@@ -12,11 +12,12 @@ from .utils import (
     hash_password,
     verify_password as utils_verify_password,
     create_access_token,
-    create_refresh_token,  # Добавили импорт
+    create_refresh_token,
     generate_verification_code,
     decode_access_token,
     validate_username,
 )
+from .firebase import verify_firebase_token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -60,7 +61,6 @@ def _send_verification_code(
         contact_value: str,
         code: str,
 ):
-
     print("\n" + "=" * 70, flush=True)
     print(
         f"[VERIFICATION CODE] type={contact_type.value} value={contact_value}  CODE={code}",
@@ -70,7 +70,6 @@ def _send_verification_code(
 
 
 def _send_reset_code(identifier: str, code: str):
-
     print("\n" + "=" * 70, flush=True)
     print(
         f"[RESET PASSWORD CODE] identifier={identifier}  CODE={code}",
@@ -93,7 +92,6 @@ def get_current_user(
     token = authorization.split(" ", 1)[1].strip()
     payload = decode_access_token(token)
 
-    # Проверяем, что это именно access токен, а не refresh
     if not payload or "sub" not in payload or payload.get("type") != "access":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -108,7 +106,6 @@ def get_current_user(
             detail="Пользователь не найден",
         )
 
-    # обновляем last_seen
     now = datetime.utcnow()
     user.last_seen = now
     db.add(user)
@@ -119,7 +116,6 @@ def get_current_user(
 
 
 def is_user_online(user: models.User) -> bool:
-
     if not getattr(user, "last_seen", None):
         return False
     delta = datetime.utcnow() - user.last_seen
@@ -127,7 +123,6 @@ def is_user_online(user: models.User) -> bool:
 
 
 def _find_user_by_identifier(db: Session, identifier: str) -> models.User | None:
-
     return (
         db.query(models.User)
         .filter(
@@ -157,7 +152,6 @@ def login(data: schemas.LoginRequest, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
 
-    # Генерируем два токена для эффекта Instagram
     access_token = create_access_token(user.id)
     refresh_token = create_refresh_token(user.id)
 
@@ -166,6 +160,104 @@ def login(data: schemas.LoginRequest, db: Session = Depends(get_db)):
         token=schemas.Token(
             access_token=access_token,
             refresh_token=refresh_token
+        )
+    )
+
+
+# ---------- Firebase Login ----------
+
+@router.post("/firebase-login", response_model=schemas.LoginResponse)
+def firebase_login(
+    authorization: str = Header(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Принимает Firebase ID Token в заголовке Authorization: Bearer <token>.
+    Находит или создаёт пользователя в БД и возвращает пару access/refresh токенов.
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Необходимо передать Firebase ID Token в заголовке Authorization",
+        )
+
+    id_token = authorization.removeprefix("Bearer ").strip()
+    decoded = verify_firebase_token(id_token)
+
+    firebase_uid: str = decoded["uid"]
+    email: str | None = decoded.get("email")
+    phone: str | None = decoded.get("phone_number")
+    display_name: str = decoded.get("name", "")
+
+    # 1. Ищем по firebase_uid
+    user = db.query(models.User).filter(
+        models.User.firebase_uid == firebase_uid
+    ).first()
+
+    # 2. Пробуем привязать по email
+    if not user and email:
+        user = db.query(models.User).filter(
+            models.User.email == email
+        ).first()
+        if user:
+            user.firebase_uid = firebase_uid
+
+    # 3. Пробуем привязать по телефону
+    if not user and phone:
+        user = db.query(models.User).filter(
+            models.User.phone == phone
+        ).first()
+        if user:
+            user.firebase_uid = firebase_uid
+
+    # 4. Создаём нового пользователя
+    if not user:
+        parts = display_name.split()
+        first_name = parts[0] if parts else "User"
+        last_name = parts[-1] if len(parts) > 1 else "Unknown"
+
+        # Генерируем уникальный username
+        base_username = (
+            email.split("@")[0] if email
+            else f"user_{firebase_uid[:8]}"
+        )
+        username = base_username
+        counter = 1
+        while db.query(models.User).filter(
+            models.User.username == username
+        ).first():
+            username = f"{base_username}{counter}"
+            counter += 1
+
+        user = models.User(
+            firebase_uid=firebase_uid,
+            email=email,
+            phone=phone,
+            username=username,
+            first_name=first_name,
+            last_name=last_name,
+            birth_date=datetime.utcnow().date(),   # временная заглушка
+            gender=models.GenderEnum.male,          # временная заглушка
+            role=models.RoleEnum.pupil,             # временная заглушка
+            password_hash=hash_password(firebase_uid),  # заглушка — пароль не нужен
+            is_active=True,
+            is_verified=True,
+            last_seen=datetime.utcnow(),
+        )
+        db.add(user)
+
+    user.last_seen = datetime.utcnow()
+    db.commit()
+    db.refresh(user)
+
+    access_token = create_access_token(user.id)
+    refresh_token = create_refresh_token(user.id)
+
+    return schemas.LoginResponse(
+        user=user,
+        token=schemas.Token(
+            access_token=access_token,
+            refresh_token=refresh_token,
         )
     )
 
@@ -184,12 +276,14 @@ def refresh_access_token(data: schemas.RefreshRequest, db: Session = Depends(get
         )
 
     user_id = int(payload["sub"])
-    user = db.query(models.User).filter(models.User.id == user_id, models.User.is_active == True).first()
+    user = db.query(models.User).filter(
+        models.User.id == user_id,
+        models.User.is_active == True,
+    ).first()
 
     if not user:
         raise HTTPException(status_code=401, detail="Пользователь не найден или заблокирован")
 
-    # Выдаем новую пару токенов
     return schemas.Token(
         access_token=create_access_token(user.id),
         refresh_token=create_refresh_token(user.id)
@@ -203,7 +297,6 @@ def register_bio(
         data: schemas.RegisterBioRequest,
         db: Session = Depends(get_db),
 ):
-
     reg = models.RegistrationSession(
         id=str(uuid.uuid4()),
         first_name=data.first_name,
@@ -240,7 +333,6 @@ def register_contact(
 ):
     reg = _get_registration_or_404(db, data.registration_id)
 
-    # проверяем уникальность контакта
     if data.contact_type == models.ContactTypeEnum.email:
         existing = (
             db.query(models.User)
@@ -487,7 +579,6 @@ def register_username(
     db.commit()
     db.refresh(user)
 
-    # При регистрации также выдаем оба токена
     access_token = create_access_token(user.id)
     refresh_token = create_refresh_token(user.id)
     token = schemas.Token(access_token=access_token, refresh_token=refresh_token)
@@ -502,19 +593,15 @@ def forgot_password(
         data: schemas.ForgotPasswordRequest,
         db: Session = Depends(get_db),
 ):
-
     user = _find_user_by_identifier(db, data.identifier)
 
-    # одинаковый ответ для всех случаев
     ok_msg = "Если аккаунт существует, будут отправлены инструкции."
 
     if not user:
         return schemas.SimpleMessage(message=ok_msg)
 
-    # генерируем код
     code = generate_verification_code()
 
-    # сохраняем в user
     user.reset_code_hash = get_password_hash(code)
     user.reset_code_expires_at = datetime.utcnow() + timedelta(
         seconds=RESET_CODE_LIFETIME_SECONDS
@@ -522,7 +609,6 @@ def forgot_password(
     db.add(user)
     db.commit()
 
-    # "отправляем" (пока заглушка)
     _send_reset_code(data.identifier, code)
 
     return schemas.SimpleMessage(message=ok_msg)
@@ -535,7 +621,6 @@ def forgot_password_confirm(
         data: schemas.ForgotPasswordConfirmRequest,
         db: Session = Depends(get_db),
 ):
-
     user = _find_user_by_identifier(db, data.identifier)
     if not user:
         raise HTTPException(
@@ -573,10 +658,7 @@ def forgot_password_confirm(
             detail="Пароль должен быть не короче 8 символов",
         )
 
-    # обновляем пароль
     user.password_hash = get_password_hash(data.new_password)
-
-    # сбрасываем reset-код (чтобы нельзя было использовать повторно)
     user.reset_code_hash = None
     user.reset_code_expires_at = None
 

@@ -172,6 +172,10 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
+    # ── Firebase ──────────────────────────────────────────────────────────────
+    firebase_uid = Column(String(128), unique=True, nullable=True, index=True)
+    # ─────────────────────────────────────────────────────────────────────────
+
     first_name = Column(String(100), nullable=False)
     last_name = Column(String(100), nullable=False)
     birth_date = Column(Date, nullable=False)
