@@ -16,6 +16,14 @@ from .models import (
     ReportReasonEnum,
 )
 
+from pydantic import BaseModel
+
+class SendCodeRequest(BaseModel):
+    phone: str
+
+class VerifyPhoneCodeRequest(BaseModel):
+    phone: str
+    code: str
 
 class Token(BaseModel):
     access_token: str
@@ -103,10 +111,14 @@ class RegisterContactRequest(BaseModel):
     contact_value: str
 
 
-class VerifyCodeRequest(BaseModel):
+class VerifyFirebaseTokenRequest(BaseModel):
     registration_id: str
-    code: str = Field(..., min_length=4, max_length=4)
+    firebase_id_token: str
 
+class ForgotPasswordConfirmFirebaseRequest(BaseModel):
+    firebase_id_token: str
+    new_password: str = Field(..., min_length=8)
+    new_password_confirm: str = Field(..., min_length=8)
 
 class RegisterPasswordRequest(BaseModel):
     registration_id: str
@@ -136,11 +148,7 @@ class ForgotPasswordRequest(BaseModel):
     identifier: str
 
 
-class ForgotPasswordConfirmRequest(BaseModel):
-    identifier: str
-    code: str = Field(..., min_length=4, max_length=4)
-    new_password: str = Field(..., min_length=8)
-    new_password_confirm: str = Field(..., min_length=8)
+
 
 
 class ChangePasswordRequest(BaseModel):
