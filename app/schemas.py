@@ -19,9 +19,12 @@ from .models import (
 from pydantic import BaseModel
 
 class SendCodeRequest(BaseModel):
+    registration_id: str
     phone: str
 
+
 class VerifyPhoneCodeRequest(BaseModel):
+    registration_id: str
     phone: str
     code: str
 
@@ -111,14 +114,6 @@ class RegisterContactRequest(BaseModel):
     contact_value: str
 
 
-class VerifyFirebaseTokenRequest(BaseModel):
-    registration_id: str
-    firebase_id_token: str
-
-class ForgotPasswordConfirmFirebaseRequest(BaseModel):
-    firebase_id_token: str
-    new_password: str = Field(..., min_length=8)
-    new_password_confirm: str = Field(..., min_length=8)
 
 class RegisterPasswordRequest(BaseModel):
     registration_id: str

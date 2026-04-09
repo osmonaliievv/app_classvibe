@@ -1,12 +1,12 @@
 from datetime import datetime
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
 from . import models, schemas
 from .database import get_db
-from .firebase_service import verify_firebase_id_token
+from .twilio_service import send_verification_code, check_verification_code
 
 from .utils import (
     create_access_token,
@@ -26,8 +26,17 @@ ONLINE_DELTA_SECONDS = 120
 def get_password_hash(password: str) -> str:
     return hash_password(password)
 
+
 def verify_password(plain: str, hashed: str) -> bool:
     return utils_verify_password(plain, hashed)
+
+
+def _normalize_phone(phone: str) -> str:
+    phone = phone.strip().replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+    if not phone.startswith("+"):
+        raise HTTPException(status_code=400, detail="Телефон должен быть в формате E.164, например +393331234567")
+    return phone
+
 
 def _get_registration_or_404(db: Session, registration_id: str) -> models.RegistrationSession:
     reg = db.query(models.RegistrationSession).filter(
@@ -37,12 +46,14 @@ def _get_registration_or_404(db: Session, registration_id: str) -> models.Regist
         raise HTTPException(status_code=404, detail="Сессия регистрации не найдена")
     return reg
 
+
 def _find_user_by_identifier(db: Session, identifier: str) -> models.User | None:
     return db.query(models.User).filter(
         (models.User.email == identifier)
         | (models.User.phone == identifier)
         | (models.User.username == identifier)
     ).first()
+
 
 def get_current_user(
     authorization: str = Header(None),
@@ -65,6 +76,7 @@ def get_current_user(
     db.commit()
     db.refresh(user)
     return user
+
 
 def is_user_online(user: models.User) -> bool:
     if not getattr(user, "last_seen", None):
@@ -148,67 +160,69 @@ def register_role(data: schemas.RegisterRoleRequest, db: Session = Depends(get_d
 def register_contact(data: schemas.RegisterContactRequest, db: Session = Depends(get_db)):
     reg = _get_registration_or_404(db, data.registration_id)
 
-    # Проверяем уникальность
     if data.contact_type == models.ContactTypeEnum.email:
         existing = db.query(models.User).filter(models.User.email == data.contact_value).first()
+        reg.contact_value = data.contact_value.strip().lower()
     else:
-        existing = db.query(models.User).filter(models.User.phone == data.contact_value).first()
+        normalized_phone = _normalize_phone(data.contact_value)
+        existing = db.query(models.User).filter(models.User.phone == normalized_phone).first()
+        reg.contact_value = normalized_phone
 
     if existing:
         raise HTTPException(status_code=400, detail="Этот контакт уже используется")
 
     reg.contact_type = data.contact_type
-    reg.contact_value = data.contact_value
     reg.is_contact_verified = False
     reg.updated_at = datetime.utcnow()
     db.commit()
 
-    # ✅ Верификацию отправляет Firebase SDK на клиенте (React Native)
-    # Бэкенд только сохраняет контакт и ждёт firebase_token на следующем шаге
     return schemas.RegistrationSessionResponse(registration_id=reg.id)
 
 
-# ---------- Регистрация: шаг 4 — верификация через Firebase token ----------
+# ---------- Отправка SMS-кода через Twilio Verify ----------
 
-@router.post("/register/verify-firebase", response_model=schemas.RegistrationSessionResponse)
-def verify_firebase(
-    data: schemas.VerifyFirebaseTokenRequest,
-    db: Session = Depends(get_db),
-):
-    """
-    Клиент прошёл верификацию через Firebase (SMS или Email),
-    получил idToken и отправляет его сюда для подтверждения.
-    """
+@router.post("/verify/send", response_model=schemas.RegistrationSessionResponse)
+def verify_send(data: schemas.SendCodeRequest, db: Session = Depends(get_db)):
     reg = _get_registration_or_404(db, data.registration_id)
 
-    try:
-        decoded = verify_firebase_id_token(data.firebase_id_token)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    if reg.contact_type != models.ContactTypeEnum.phone:
+        raise HTTPException(status_code=400, detail="SMS-верификация доступна только для телефона")
 
-    # Проверяем совпадение контакта
-    firebase_phone = decoded.get("phone_number")
-    firebase_email = decoded.get("email")
+    phone = _normalize_phone(data.phone)
 
-    if reg.contact_type == models.ContactTypeEnum.phone:
-        if firebase_phone != reg.contact_value:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Телефон в токене ({firebase_phone}) не совпадает с сессией",
-            )
-    elif reg.contact_type == models.ContactTypeEnum.email:
-        if (firebase_email or "").lower() != reg.contact_value.lower():
-            raise HTTPException(
-                status_code=400,
-                detail=f"Email в токене ({firebase_email}) не совпадает с сессией",
-            )
+    if reg.contact_value != phone:
+        raise HTTPException(status_code=400, detail="Телефон не совпадает с contact_value в сессии")
 
-    # Сохраняем firebase_uid в сессии для финального шага
+    send_verification_code(phone)
+
+    reg.last_code_sent_at = datetime.utcnow()
+    reg.updated_at = datetime.utcnow()
+    db.commit()
+
+    return schemas.RegistrationSessionResponse(registration_id=reg.id)
+
+
+# ---------- Проверка SMS-кода через Twilio Verify ----------
+
+@router.post("/verify/check", response_model=schemas.RegistrationSessionResponse)
+def verify_check(data: schemas.VerifyPhoneCodeRequest, db: Session = Depends(get_db)):
+    reg = _get_registration_or_404(db, data.registration_id)
+
+    if reg.contact_type != models.ContactTypeEnum.phone:
+        raise HTTPException(status_code=400, detail="SMS-верификация доступна только для телефона")
+
+    phone = _normalize_phone(data.phone)
+
+    if reg.contact_value != phone:
+        raise HTTPException(status_code=400, detail="Телефон не совпадает с contact_value в сессии")
+
+    result = check_verification_code(phone, data.code)
+
+    if result.status != "approved":
+        raise HTTPException(status_code=400, detail="Неверный или просроченный код")
+
     reg.is_contact_verified = True
     reg.updated_at = datetime.utcnow()
-
-    # Можно сохранить uid во временное поле, если хочешь связать с User позже
-    # reg.firebase_uid = decoded["uid"]
     db.commit()
 
     return schemas.RegistrationSessionResponse(registration_id=reg.id)
@@ -252,9 +266,9 @@ def register_username(data: schemas.RegisterUsernameRequest, db: Session = Depen
     reg = _get_registration_or_404(db, reg_id)
 
     if not reg.is_contact_verified:
-        raise HTTPException(status_code=400, detail="Сначала подтвердите контакт через Firebase")
+        raise HTTPException(status_code=400, detail="Сначала подтвердите телефон через SMS-код")
 
-    missing = [f for f in ("first_name","last_name","birth_date","gender","role","password_hash") if getattr(reg, f) is None]
+    missing = [f for f in ("first_name", "last_name", "birth_date", "gender", "role", "password_hash") if getattr(reg, f) is None]
     if missing:
         raise HTTPException(status_code=400, detail=f"Отсутствуют данные: {', '.join(missing)}")
 
@@ -263,6 +277,17 @@ def register_username(data: schemas.RegisterUsernameRequest, db: Session = Depen
 
     if db.query(models.User).filter(models.User.username == data.username).first():
         raise HTTPException(status_code=400, detail="Имя пользователя уже занято")
+
+    # ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА КОНТАКТА ПЕРЕД СОЗДАНИЕМ USER
+    if reg.contact_type == models.ContactTypeEnum.phone:
+        existing_phone_user = db.query(models.User).filter(models.User.phone == reg.contact_value).first()
+        if existing_phone_user:
+            raise HTTPException(status_code=400, detail="Пользователь с таким телефоном уже существует")
+
+    if reg.contact_type == models.ContactTypeEnum.email:
+        existing_email_user = db.query(models.User).filter(models.User.email == reg.contact_value).first()
+        if existing_email_user:
+            raise HTTPException(status_code=400, detail="Пользователь с таким email уже существует")
 
     reg.username = data.username
     reg.is_completed = True
@@ -287,7 +312,13 @@ def register_username(data: schemas.RegisterUsernameRequest, db: Session = Depen
         user.phone = reg.contact_value
 
     db.add(user)
-    db.commit()
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
     db.refresh(user)
 
     return schemas.LoginResponse(
@@ -298,50 +329,11 @@ def register_username(data: schemas.RegisterUsernameRequest, db: Session = Depen
         ),
     )
 
-
 # ---------- Забыл пароль ----------
 
 @router.post("/forgot-password", response_model=schemas.SimpleMessage)
 def forgot_password(data: schemas.ForgotPasswordRequest, db: Session = Depends(get_db)):
-    # Всегда отвечаем одинаково (безопасность)
     return schemas.SimpleMessage(message="Если аккаунт существует, будут отправлены инструкции.")
-
-
-@router.post("/forgot-password/confirm", response_model=schemas.SimpleMessage)
-def forgot_password_confirm(
-    data: schemas.ForgotPasswordConfirmFirebaseRequest,
-    db: Session = Depends(get_db),
-):
-    """
-    Клиент верифицировал телефон/email через Firebase,
-    получил idToken и отправляет его вместе с новым паролем.
-    """
-    try:
-        decoded = verify_firebase_id_token(data.firebase_id_token)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    firebase_phone = decoded.get("phone_number")
-    firebase_email = decoded.get("email")
-
-    user = None
-    if firebase_phone:
-        user = db.query(models.User).filter(models.User.phone == firebase_phone).first()
-    if not user and firebase_email:
-        user = db.query(models.User).filter(models.User.email == firebase_email).first()
-
-    if not user:
-        raise HTTPException(status_code=400, detail="Пользователь не найден")
-
-    if data.new_password != data.new_password_confirm:
-        raise HTTPException(status_code=400, detail="Пароли не совпадают")
-    if len(data.new_password) < 8:
-        raise HTTPException(status_code=400, detail="Пароль должен быть не короче 8 символов")
-
-    user.password_hash = get_password_hash(data.new_password)
-    db.commit()
-
-    return schemas.SimpleMessage(message="Пароль успешно изменён. Теперь войдите в аккаунт.")
 
 
 # ---------- /auth/me ----------

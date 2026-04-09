@@ -13,7 +13,7 @@ venv/
 ENV/
 .env.docker
 .env.local
-
+.env.production
 serviceAccountKey.json
 
 ### Базы данных ###
