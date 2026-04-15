@@ -75,11 +75,11 @@ def _best_posts_school(
 
 
 STATUS_LABELS = {
-    "creative": "🎨 Креативный",
-    "study": "📚 Учебный",
-    "friendly": "🤝 Дружный",
-    "creative_art": "🎭 Творческий",
-    "sport": "⚽️ Спортивный",
+    "creative": "Креативный",
+    "study": "Учебный",
+    "friendly": "Дружный",
+    "creative_art": "Творческий",
+    "sport": "Спортивный",
 }
 
 
