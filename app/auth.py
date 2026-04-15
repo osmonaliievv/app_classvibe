@@ -333,9 +333,78 @@ def register_username(data: schemas.RegisterUsernameRequest, db: Session = Depen
 
 @router.post("/forgot-password", response_model=schemas.SimpleMessage)
 def forgot_password(data: schemas.ForgotPasswordRequest, db: Session = Depends(get_db)):
-    return schemas.SimpleMessage(message="Если аккаунт существует, будут отправлены инструкции.")
+    identifier = data.identifier.strip()
+
+    if not identifier:
+        raise HTTPException(status_code=400, detail="Введите номер телефона")
+
+    # Пока поддерживаем восстановление только по телефону
+    if "@" in identifier:
+        raise HTTPException(
+            status_code=400,
+            detail="Восстановление по email пока не поддерживается. Используйте номер телефона."
+        )
+
+    phone = _normalize_phone(identifier)
+
+    user = db.query(models.User).filter(
+        models.User.phone == phone,
+        models.User.is_active == True,
+    ).first()
+
+    # Не раскрываем, существует пользователь или нет
+    if user:
+        send_verification_code(phone)
+
+    return schemas.SimpleMessage(
+        message="Если аккаунт существует, код подтверждения отправлен."
+    )
 
 
+@router.post("/forgot-password/confirm", response_model=schemas.SimpleMessage)
+def forgot_password_confirm(
+    data: schemas.ForgotPasswordConfirmRequest,
+    db: Session = Depends(get_db),
+):
+    identifier = data.identifier.strip()
+
+    if not identifier:
+        raise HTTPException(status_code=400, detail="Введите номер телефона")
+
+    if "@" in identifier:
+        raise HTTPException(
+            status_code=400,
+            detail="Восстановление по email пока не поддерживается. Используйте номер телефона."
+        )
+
+    phone = _normalize_phone(identifier)
+
+    if data.new_password != data.new_password_confirm:
+        raise HTTPException(status_code=400, detail="Пароли не совпадают")
+
+    if len(data.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Пароль должен быть не короче 8 символов")
+
+    user = db.query(models.User).filter(
+        models.User.phone == phone,
+        models.User.is_active == True,
+    ).first()
+
+    if not user:
+        raise HTTPException(status_code=400, detail="Неверный код или пользователь не найден")
+
+    result = check_verification_code(phone, data.code)
+
+    if result.status != "approved":
+        raise HTTPException(status_code=400, detail="Неверный или просроченный код")
+
+    user.password_hash = get_password_hash(data.new_password)
+    user.last_seen = datetime.utcnow()
+
+    db.commit()
+    db.refresh(user)
+
+    return schemas.SimpleMessage(message="Пароль успешно изменён")
 # ---------- /auth/me ----------
 
 @router.get("/me", response_model=schemas.UserBase)
