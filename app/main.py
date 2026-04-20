@@ -1,7 +1,8 @@
-# app/main
+# app/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 import os
@@ -391,6 +392,14 @@ app.include_router(settings_router)
 app.include_router(school_life_router)
 app.include_router(reports_router)
 app.include_router(admin_router)
+
+
+# =========================================================
+# Public pages
+# =========================================================
+@app.get("/privacy-policy")
+def privacy_policy():
+    return FileResponse("app/templates/privacy_policy.html")
 
 
 @app.get("/")
